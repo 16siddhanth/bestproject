@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+
+# Next.js
+mainproject/.next/
+mainproject/out/
+mainproject/build/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# Model weights (large binary files)
+*.rpk
+*.pt
+*.onnx
+*.h5
+
+# Training outputs
+raspi_system/training/runs/
+raspi_system/models/exported/
+
+# Training data (images — too large for git)
+raspi_system/data/images/train/*/
+raspi_system/data/images/val/*/
+raspi_system/data/labels/train/
+raspi_system/data/labels/val/
+
+# Environment
+.env
+.env.local
+.env*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Misc
+*.tsbuildinfo
