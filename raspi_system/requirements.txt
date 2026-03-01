@@ -1,0 +1,18 @@
+# VeggieFeed Raspberry Pi System — Python Dependencies
+# Install: pip install -r requirements.txt
+
+# Core
+flask>=3.0.0
+flask-cors>=4.0.0
+numpy>=1.24.0
+opencv-python-headless>=4.8.0
+
+# YOLO training & inference (optional — only needed for training/software inference)
+ultralytics>=8.1.0
+
+# Raspberry Pi specific (install via apt on Pi OS)
+# sudo apt install python3-picamera2 python3-rpicam
+# RPi.GPIO is pre-installed on Raspberry Pi OS
+
+# Weight sensor
+# pip install hx711  # Optional HX711 library

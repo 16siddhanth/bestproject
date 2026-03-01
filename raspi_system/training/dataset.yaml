@@ -1,0 +1,34 @@
+# VeggieFeed - Vegetable Peel Classification Dataset Config
+# Used for fine-tuning YOLOv11n for vegetable peel/waste detection
+#
+# Dataset structure:
+#   data/
+#     images/
+#       train/    (training images)
+#       val/      (validation images)
+#     labels/
+#       train/    (YOLO format label files)
+#       val/      (YOLO format label files)
+#
+# Label format (per .txt file, one line per object):
+#   <class_id> <x_center> <y_center> <width> <height>
+#   All values normalized 0-1 relative to image dimensions
+
+path: ../data          # dataset root dir (relative to where training script runs)
+train: images/train    # train images
+val: images/val        # val images
+
+# 12 classes of vegetable waste/peels
+names:
+  0: carrot_peels
+  1: potato_skins
+  2: onion_skins
+  3: tomato_skins
+  4: cucumber_peels
+  5: cabbage_leaves
+  6: lettuce
+  7: bell_pepper_scraps
+  8: broccoli_stems
+  9: cauliflower_leaves
+  10: celery
+  11: spinach
