@@ -1,0 +1,173 @@
+"""
+M5Stack MiniScales Unit — Raspberry Pi 5 over I2C (smbus2).
+
+The MiniScales has an onboard STM32 that handles the HX711;
+we only need to read/write I2C registers.
+
+Wiring (Grove HY2.0-4P → Pi 5 GPIO header):
+    Yellow (SDA)  → GPIO 2  (pin 3)
+    White  (SCL)  → GPIO 3  (pin 5)
+    Red    (VCC)  → 5 V     (pin 2 or 4)
+    Black  (GND)  → GND     (pin 6)
+
+Enable I2C on Pi 5 if not already:
+    sudo raspi-config  →  Interface Options  →  I2C  →  Enable
+    # or: sudo dtparam i2c_arm=on
+
+Install dependency:
+    sudo apt install python3-smbus2      # preferred on Pi OS Bookworm
+    # or: pip install smbus2             (inside a venv)
+
+Verify the device is detected:
+    i2cdetect -y 1        # should show 0x26
+"""
+
+import struct
+import time
+import smbus2
+
+# ── I2C address & bus ──────────────────────────────────────────────
+I2C_BUS = 1
+DEVICE_ADDR = 0x26
+
+# ── Register map (from M5Stack UNIT_SCALES driver) ────────────────
+REG_RAW_ADC       = 0x00   # 4 bytes  int32   LE
+REG_WEIGHT_FLOAT  = 0x10   # 4 bytes  float   LE  (calibrated)
+REG_BUTTON        = 0x20   # 1 byte   uint8
+REG_RGB_LED       = 0x30   # 3 bytes  R G B
+REG_GAP           = 0x40   # 4 bytes  float   LE  (scale factor)
+REG_OFFSET        = 0x50   # 1 byte   write 1 to tare
+REG_WEIGHT_INT    = 0x60   # 4 bytes  int32   LE  (calibrated, int)
+REG_WEIGHT_STR    = 0x70   # 16 bytes string
+REG_LP_FILTER     = 0x80   # 1 byte   0/1
+REG_AVG_FILTER    = 0x81   # 1 byte
+REG_EMA_FILTER    = 0x82   # 1 byte
+REG_FW_VERSION    = 0xFE   # 1 byte
+REG_I2C_ADDR      = 0xFF   # 1 byte
+
+
+class MiniScales:
+    """Driver for M5Stack MiniScales Unit over I2C."""
+
+    def __init__(self, bus: int = I2C_BUS, addr: int = DEVICE_ADDR):
+        self.addr = addr
+        self.bus = smbus2.SMBus(bus)
+
+    def close(self):
+        self.bus.close()
+
+    # ── low-level helpers ──────────────────────────────────────────
+    def _read(self, reg: int, length: int) -> bytes:
+        return bytes(self.bus.read_i2c_block_data(self.addr, reg, length))
+
+    def _write(self, reg: int, data: bytes):
+        self.bus.write_i2c_block_data(self.addr, reg, list(data))
+
+    # ── reading ────────────────────────────────────────────────────
+    def get_raw_adc(self) -> int:
+        """Raw 24-bit HX711 ADC count (signed int32)."""
+        return struct.unpack_from("<i", self._read(REG_RAW_ADC, 4))[0]
+
+    def get_weight(self) -> float:
+        """Calibrated weight as float (grams)."""
+        return struct.unpack_from("<f", self._read(REG_WEIGHT_FLOAT, 4))[0]
+
+    def get_weight_int(self) -> int:
+        """Calibrated weight as int32 (grams)."""
+        return struct.unpack_from("<i", self._read(REG_WEIGHT_INT, 4))[0]
+
+    def get_weight_string(self) -> str:
+        """Calibrated weight as a null-terminated string."""
+        raw = self._read(REG_WEIGHT_STR, 16)
+        return raw.split(b"\x00", 1)[0].decode("ascii", errors="replace")
+
+    def get_button(self) -> bool:
+        """True if the onboard button is pressed."""
+        return bool(self._read(REG_BUTTON, 1)[0])
+
+    # ── tare / calibration ─────────────────────────────────────────
+    def tare(self):
+        """Zero the scale (set current load as offset)."""
+        self._write(REG_OFFSET, b"\x01")
+        time.sleep(0.2)
+
+    def get_gap(self) -> float:
+        """Current gap (scale factor) value."""
+        return struct.unpack_from("<f", self._read(REG_GAP, 4))[0]
+
+    def set_gap(self, gap: float):
+        """Set the gap (scale factor).
+        gap = known_weight_grams / (raw_with_weight − raw_empty)
+        """
+        self._write(REG_GAP, struct.pack("<f", gap))
+        time.sleep(0.1)
+
+    # ── LED ────────────────────────────────────────────────────────
+    def set_led(self, r: int, g: int, b: int):
+        self._write(REG_RGB_LED, bytes([r & 0xFF, g & 0xFF, b & 0xFF]))
+
+    def get_led(self) -> tuple[int, int, int]:
+        d = self._read(REG_RGB_LED, 3)
+        return (d[0], d[1], d[2])
+
+    # ── filters ────────────────────────────────────────────────────
+    def set_lp_filter(self, enable: bool):
+        self._write(REG_LP_FILTER, bytes([int(enable)]))
+
+    def set_avg_filter(self, samples: int):
+        self._write(REG_AVG_FILTER, bytes([samples & 0xFF]))
+
+    def set_ema_filter(self, alpha: int):
+        self._write(REG_EMA_FILTER, bytes([alpha & 0xFF]))
+
+    # ── info ───────────────────────────────────────────────────────
+    def get_firmware_version(self) -> int:
+        return self._read(REG_FW_VERSION, 1)[0]
+
+
+# ── Main ──────────────────────────────────────────────────────────
+def main():
+    scale = MiniScales()
+    try:
+        fw = scale.get_firmware_version()
+        print(f"MiniScales connected  (FW v{fw})")
+
+        # Green LED to confirm connection
+        scale.set_led(0, 16, 0)
+
+        # Enable onboard filters for stable readings
+        scale.set_lp_filter(True)
+        scale.set_avg_filter(20)
+        scale.set_ema_filter(10)
+        time.sleep(0.3)
+
+        # Tare on startup — let readings settle first
+        print("Taring — keep the scale empty ...")
+        time.sleep(1)
+        scale.tare()
+        time.sleep(1)
+        print("Ready — place weight on scale.  Ctrl-C to quit.\n")
+
+        while True:
+            weight = scale.get_weight()
+            raw = scale.get_raw_adc()
+            btn = scale.get_button()
+
+            # Update in-place on the same line
+            print(
+                f"\rWeight: {weight:>8.1f} g   "
+                f"Raw: {raw:>10d}   "
+                f"Btn: {'PRESSED' if btn else '-'}   ",
+                end="", flush=True,
+            )
+            time.sleep(1)
+
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        scale.set_led(0, 0, 0)
+        scale.close()
+
+
+if __name__ == "__main__":
+    main()
