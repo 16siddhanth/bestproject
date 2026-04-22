@@ -7,8 +7,8 @@ Install dependency:
     sudo apt install python3-lgpio
 
 Wiring (BCM pin numbers):
-    HX711 DOUT  -> GPIO 6   (pin 31)
-    HX711 SCK   -> GPIO 5   (pin 29)
+    HX711 DOUT  -> GPIO 5   (pin 29)
+    HX711 SCK   -> GPIO 6   (pin 31)
     HX711 VCC   -> 3.3V or 5V
     HX711 GND   -> GND
 
@@ -21,11 +21,12 @@ Calibration:
 
 import lgpio
 import time
+import argparse
 
 # --- Configuration ---
-DOUT_PIN = 6          # BCM pin for HX711 data output
-SCK_PIN  = 5          # BCM pin for HX711 clock
-REFERENCE_UNIT = 1    # Adjust after calibration (raw counts per gram)
+DOUT_PIN = 5          # BCM pin for HX711 data output (physical pin 29)
+SCK_PIN  = 6          # BCM pin for HX711 clock (physical pin 31)
+REFERENCE_UNIT = 712.930    # Calibrated counts per gram
 NUM_SAMPLES = 7       # Median filter size per reading
 
 
@@ -92,7 +93,51 @@ def tare(h: int, n: int = 20) -> float:
     return offset
 
 
+def calibrate(h: int, offset: float, known_weight_g: float, n: int = 25) -> float:
+    """Estimate counts-per-gram from a known calibration weight."""
+    if known_weight_g <= 0:
+        raise ValueError("Known weight must be > 0 grams.")
+
+    print(f"Place {known_weight_g:.1f} g on the scale, then wait...")
+    time.sleep(2)
+    raw = read_median(h, n=n)
+    if raw is None:
+        raise RuntimeError("Calibration failed: HX711 read timeout.")
+
+    delta = raw - offset
+    if abs(delta) < 100:
+        raise RuntimeError(
+            "Calibration signal too small. Use a heavier known weight or check wiring."
+        )
+
+    reference_unit = abs(delta) / known_weight_g
+    print(
+        f"Calibration raw={raw:.0f}, offset={offset:.0f}, delta={delta:.0f} -> "
+        f"REFERENCE_UNIT={reference_unit:.3f} counts/g"
+    )
+    return reference_unit
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Read HX711 load cell on Raspberry Pi 5")
+    parser.add_argument(
+        "--calibrate",
+        type=float,
+        metavar="GRAMS",
+        help="Known weight in grams to auto-calculate REFERENCE_UNIT",
+    )
+    parser.add_argument(
+        "--reference-unit",
+        type=float,
+        default=REFERENCE_UNIT,
+        help="Counts per gram (overrides REFERENCE_UNIT constant)",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     h = lgpio.gpiochip_open(4)   # Pi 5 uses gpiochip4
     lgpio.gpio_claim_output(h, SCK_PIN, 0)
     lgpio.gpio_claim_input(h, DOUT_PIN)
@@ -100,6 +145,18 @@ def main():
     try:
         time.sleep(1)                    # Let HX711 settle after power-on
         offset = tare(h)
+
+        reference_unit = args.reference_unit
+        if args.calibrate is not None:
+            reference_unit = calibrate(h, offset, args.calibrate)
+            print(
+                f"\nSet this in the script for future runs: REFERENCE_UNIT = {reference_unit:.3f}\n"
+            )
+        elif reference_unit == 1:
+            print(
+                "Warning: REFERENCE_UNIT is still 1. Run once with --calibrate <known_grams>."
+            )
+
         print("Ready — place weight on scale. Ctrl-C to quit.\n")
 
         while True:
@@ -107,7 +164,7 @@ def main():
             if raw is None:
                 print("\rRead timeout — check wiring.          ", end="", flush=True)
             else:
-                weight_g = (raw - offset) / REFERENCE_UNIT
+                weight_g = (raw - offset) / reference_unit
                 print(
                     f"\rRaw: {raw:>10d}   Weight: {weight_g:>8.1f} g   ",
                     end="", flush=True,

@@ -248,7 +248,12 @@ def run_classification_inference(model_path: str, labels: List[str],
 
             # Also write annotations to the preview buffer
             if not headless:
-                np.copyto(m.array, frame)
+                preview_frame = frame
+                if m.array.ndim == 3 and m.array.shape[2] == 4:
+                    preview_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
+                elif m.array.ndim == 3 and m.array.shape[2] == 3:
+                    preview_frame = frame
+                np.copyto(m.array, preview_frame)
 
         inference_state.update(
             last_detections if last_detections else [],
@@ -497,7 +502,12 @@ def run_detection_inference(model_path: str, labels: List[str],
 
             # Write annotations to the preview buffer
             if not headless:
-                np.copyto(m.array, frame)
+                preview_frame = frame
+                if m.array.ndim == 3 and m.array.shape[2] == 4:
+                    preview_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
+                elif m.array.ndim == 3 and m.array.shape[2] == 3:
+                    preview_frame = frame
+                np.copyto(m.array, preview_frame)
 
     imx500.show_network_fw_progress_bar()
     inference_state.is_running = True
