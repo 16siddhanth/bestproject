@@ -1,265 +1,241 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { Leaf, Settings, LogOut, BarChart3, Camera, Users, TrendingUp, Video } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useState, useEffect, useCallback, useRef } from "react"
+import { Leaf, Wifi, WifiOff, Gauge, LogOut } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import CameraCapture from "@/components/CameraCapture"
-import ClassificationResults from "@/components/ClassificationResults"
-import LiveFeed from "@/components/LiveFeed"
+import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import SystemControl from "@/components/SystemControl"
+import BinStatusPanel from "@/components/BinStatusPanel"
+import ClassificationLog from "@/components/ClassificationLog"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 
-interface ClassificationData {
-  classification: {
-    top3: Array<{ label: string; confidence: number; color: string }>
-    primaryLabel: string
-    confidence: number
-  }
-  nutrition: {
-    protein: number
-    fiber: number
-    moisture: number
-    energy: number
-  }
-  recommendations: Array<{
-    animalType: string
-    suitability: "High" | "Medium" | "Low"
-    processingRequired: string[]
-    nutritionalBenefit: string
-  }>
+const SYSTEM_API = process.env.NEXT_PUBLIC_SYSTEM_API || "http://localhost:5001"
+const POLL_INTERVAL = 1200
+
+interface SystemStatus {
+  connected: boolean
+  status: string
+  running: boolean
+  camera_connected: boolean
+  fps: number
+  vibration_active: boolean
+  bins: Record<string, any>
+  recent_events: any[]
+}
+
+const DEFAULT_BINS = {
+  "0": {
+    animal: "Cattle", bin_id: 0, total_weight_g: 0, estimated_weight_g: 0,
+    peel_count: 0,
+    nutrients_per_100g: { calories_kcal: 0, protein_g: 0, fat_g: 0, fiber_g: 0, calcium_mg: 0, phosphorus_mg: 0 },
+    target_ranges: {
+      calories_kcal: { min: 250, max: 300 }, protein_g: { min: 12, max: 16 },
+      fat_g: { min: 3, max: 5 }, fiber_g: { min: 17, max: 25 },
+      calcium_mg: { min: 400, max: 800 }, phosphorus_mg: { min: 200, max: 500 },
+    },
+  },
+  "1": {
+    animal: "Goats", bin_id: 1, total_weight_g: 0, estimated_weight_g: 0,
+    peel_count: 0,
+    nutrients_per_100g: { calories_kcal: 0, protein_g: 0, fat_g: 0, fiber_g: 0, calcium_mg: 0, phosphorus_mg: 0 },
+    target_ranges: {
+      calories_kcal: { min: 250, max: 280 }, protein_g: { min: 14, max: 18 },
+      fat_g: { min: 3, max: 5 }, fiber_g: { min: 15, max: 22 },
+      calcium_mg: { min: 400, max: 600 }, phosphorus_mg: { min: 200, max: 400 },
+    },
+  },
+  "2": {
+    animal: "Poultry", bin_id: 2, total_weight_g: 0, estimated_weight_g: 0,
+    peel_count: 0,
+    nutrients_per_100g: { calories_kcal: 0, protein_g: 0, fat_g: 0, fiber_g: 0, calcium_mg: 0, phosphorus_mg: 0 },
+    target_ranges: {
+      calories_kcal: { min: 280, max: 320 }, protein_g: { min: 16, max: 22 },
+      fat_g: { min: 3, max: 8 }, fiber_g: { min: 3, max: 5 },
+      calcium_mg: { min: 800, max: 1200 }, phosphorus_mg: { min: 400, max: 600 },
+    },
+  },
+  "3": {
+    animal: "Pigs", bin_id: 3, total_weight_g: 0, estimated_weight_g: 0,
+    peel_count: 0,
+    nutrients_per_100g: { calories_kcal: 0, protein_g: 0, fat_g: 0, fiber_g: 0, calcium_mg: 0, phosphorus_mg: 0 },
+    target_ranges: {
+      calories_kcal: { min: 320, max: 360 }, protein_g: { min: 13, max: 18 },
+      fat_g: { min: 5, max: 10 }, fiber_g: { min: 5, max: 8 },
+      calcium_mg: { min: 500, max: 900 }, phosphorus_mg: { min: 400, max: 700 },
+    },
+  },
 }
 
 export default function Dashboard() {
-  const [classificationData, setClassificationData] = useState<ClassificationData | null>(null)
-  const [isClassifying, setIsClassifying] = useState(false)
-  const [noVegetable, setNoVegetable] = useState(false)
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const router = useRouter()
+  const [systemStatus, setSystemStatus] = useState<SystemStatus>({
+    connected: false,
+    status: "idle",
+    running: false,
+    camera_connected: false,
+    fps: 0,
+    vibration_active: false,
+    bins: DEFAULT_BINS,
+    recent_events: [],
+  })
+  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  const pollStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/system/status", { cache: "no-store" })
+      if (res.ok) {
+        const data = await res.json()
+        setSystemStatus({
+          connected: data.connected ?? true,
+          status: data.status ?? "idle",
+          running: data.running ?? false,
+          camera_connected: data.camera_connected ?? false,
+          fps: data.fps ?? 0,
+          vibration_active: data.vibration_active ?? false,
+          bins: data.bins && Object.keys(data.bins).length > 0 ? data.bins : DEFAULT_BINS,
+          recent_events: data.recent_events ?? [],
+        })
+      } else {
+        setSystemStatus((prev) => ({ ...prev, connected: false }))
+      }
+    } catch {
+      setSystemStatus((prev) => ({ ...prev, connected: false }))
+    }
+  }, [])
 
   useEffect(() => {
-    // Check authentication status
-    const authStatus = localStorage.getItem("veggiefeed_auth")
-    if (!authStatus) {
-      router.push("/auth/login")
-    } else {
-      setIsAuthenticated(true)
+    pollStatus()
+    intervalRef.current = setInterval(pollStatus, POLL_INTERVAL)
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
     }
-  }, [router])
+  }, [pollStatus])
 
-  const handleLogout = () => {
-    localStorage.removeItem("veggiefeed_auth")
-    router.push("/")
-  }
-
-  const handleImageCapture = async (imageData: string) => {
-    setIsClassifying(true)
-    setNoVegetable(false)
+  const handleStart = async () => {
     try {
-      const response = await fetch("/api/classify-enhanced", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          imageBase64: imageData,
-          userId: "authenticated-user",
-        }),
-      })
-
-      const result = await response.json()
-      if (result.success) {
-        // Detect a no-vegetable case: empty top3 or low confidence top-1
-        const top3 = result?.classification?.top3 || []
-        const top1 = top3[0]
-        const lowConfidence = top1?.confidence !== undefined ? top1.confidence < 30 : true
-        const invalidLabel = typeof top1?.label !== "string" || !top1.label
-
-        if (!top3.length || lowConfidence || invalidLabel) {
-          setNoVegetable(true)
-          setClassificationData(null)
-        } else {
-          setNoVegetable(false)
-          setClassificationData(result)
-        }
-      } else {
-        alert("Classification failed. Please try again.")
-      }
-    } catch (error) {
-      console.error("Classification error:", error)
-      alert("Classification failed. Please try again.")
-    } finally {
-      setIsClassifying(false)
+      await fetch("/api/system/start", { method: "POST" })
+      setTimeout(pollStatus, 500)
+    } catch (e) {
+      console.error("Start error:", e)
     }
   }
 
-  const handleImageUpload = async (file: File) => {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      if (e.target?.result) {
-        handleImageCapture(e.target.result as string)
-      }
+  const handleStop = async () => {
+    try {
+      await fetch("/api/system/stop", { method: "POST" })
+      setTimeout(pollStatus, 500)
+    } catch (e) {
+      console.error("Stop error:", e)
     }
-    reader.readAsDataURL(file)
   }
 
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading...</p>
-        </div>
-      </div>
-    )
-  }
+  const streamUrl = systemStatus.running && systemStatus.camera_connected
+    ? `${SYSTEM_API}/system/stream`
+    : null
 
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex items-center justify-between">
+      <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-20">
+        <div className="container mx-auto px-4 py-3 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
-            <div className="p-1.5 sm:p-2 rounded-xl gradient-green">
-              <Leaf className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
+            <div className="p-2 rounded-xl gradient-green">
+              <Leaf className="h-5 w-5 text-white" />
             </div>
-            <h1 className="text-lg sm:text-xl font-bold text-foreground">VeggieFeed</h1>
+            <h1 className="text-lg font-bold text-foreground">VeggieFeed</h1>
           </Link>
-          <div className="flex items-center gap-2 sm:gap-4">
-            <Badge className="bg-green-100 text-green-800 border-green-200 text-xs sm:text-sm px-2 sm:px-3">
-              Pro Account
-            </Badge>
-            <Button variant="ghost" size="sm" className="p-2">
-              <Settings className="h-4 w-4" />
-            </Button>
-            <Button variant="ghost" size="sm" onClick={handleLogout} className="p-2">
-              <LogOut className="h-4 w-4" />
-            </Button>
+          <div className="flex items-center gap-3">
+            {systemStatus.connected ? (
+              <Badge className="bg-emerald-900/60 text-emerald-300 border-0 text-xs flex items-center gap-1">
+                <Wifi className="h-3 w-3" /> Connected
+              </Badge>
+            ) : (
+              <Badge className="bg-red-900/60 text-red-300 border-0 text-xs flex items-center gap-1">
+                <WifiOff className="h-3 w-3" /> Disconnected
+              </Badge>
+            )}
+            {systemStatus.running && systemStatus.fps > 0 && (
+              <Badge className="bg-zinc-800 text-zinc-300 border-0 text-xs flex items-center gap-1">
+                <Gauge className="h-3 w-3" /> {systemStatus.fps.toFixed(1)} FPS
+              </Badge>
+            )}
+            <Link href="/auth/login">
+              <Button variant="ghost" size="sm" className="text-white/50 hover:text-white/80">
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </Link>
           </div>
         </div>
       </header>
 
-      {/* Dashboard Content */}
-      <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {/* Welcome Section */}
-        <div className="mb-6 sm:mb-8">
-          <h1 className="text-2xl sm:text-3xl font-bold mb-2">Welcome back!</h1>
-          <p className="text-muted-foreground text-sm sm:text-base">
-            Ready to optimize your feed management with AI-powered analysis.
-          </p>
+      {/* Main Content */}
+      <main className="container mx-auto px-4 py-5">
+        {/* System Control Row */}
+        <div className="mb-5">
+          <SystemControl
+            status={systemStatus.status}
+            running={systemStatus.running}
+            vibrationActive={systemStatus.vibration_active}
+            connected={systemStatus.connected}
+            onStart={handleStart}
+            onStop={handleStop}
+          />
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-6 mb-6 sm:mb-8">
-          <Card className="card-green border-green-200">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-3 sm:px-6 pt-3 sm:pt-6">
-              <CardTitle className="text-xs sm:text-sm font-medium text-green-800">Classifications Today</CardTitle>
-              <Camera className="h-3 w-3 sm:h-4 sm:w-4 text-green-600" />
-            </CardHeader>
-            <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
-              <div className="text-xl sm:text-2xl font-bold text-green-800">24</div>
-              <p className="text-xs text-green-600">+12% from yesterday</p>
-            </CardContent>
-          </Card>
-
-          <Card className="card-green border-green-200">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-3 sm:px-6 pt-3 sm:pt-6">
-              <CardTitle className="text-xs sm:text-sm font-medium text-green-800">Feed Efficiency</CardTitle>
-              <TrendingUp className="h-3 w-3 sm:h-4 sm:w-4 text-green-600" />
-            </CardHeader>
-            <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
-              <div className="text-xl sm:text-2xl font-bold text-green-800">94%</div>
-              <p className="text-xs text-green-600">+2% this week</p>
-            </CardContent>
-          </Card>
-
-          <Card className="card-green border-green-200">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-3 sm:px-6 pt-3 sm:pt-6">
-              <CardTitle className="text-xs sm:text-sm font-medium text-green-800">Waste Reduced</CardTitle>
-              <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4 text-green-600" />
-            </CardHeader>
-            <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
-              <div className="text-xl sm:text-2xl font-bold text-green-800">1.2t</div>
-              <p className="text-xs text-green-600">This month</p>
-            </CardContent>
-          </Card>
-
-          <Card className="card-green border-green-200">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 px-3 sm:px-6 pt-3 sm:pt-6">
-              <CardTitle className="text-xs sm:text-sm font-medium text-green-800">Animals Fed</CardTitle>
-              <Users className="h-3 w-3 sm:h-4 sm:w-4 text-green-600" />
-            </CardHeader>
-            <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
-              <div className="text-xl sm:text-2xl font-bold text-green-800">156</div>
-              <p className="text-xs text-green-600">Across 3 farms</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Main Classification Interface */}
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 sm:gap-8">
-          {/* Camera Section with Tabs: Live Feed vs Manual Capture */}
-          <div className="xl:col-span-2">
-            <Tabs defaultValue="live" className="w-full">
-              <div className="flex items-center justify-between mb-4 sm:mb-6">
-                <div>
-                  <h2 className="text-xl sm:text-2xl font-bold mb-1">Vegetable Waste Classification</h2>
-                  <p className="text-muted-foreground text-sm sm:text-base leading-relaxed">
-                    Real-time YOLO11n inference with bounding boxes and classification
-                  </p>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* Left: Camera Feed + Log (2/3) */}
+          <div className="lg:col-span-2 space-y-4">
+            {/* Camera Feed */}
+            <Card className="bg-card/50 border-border overflow-hidden">
+              <CardContent className="p-0">
+                <div className="relative aspect-video bg-black">
+                  {streamUrl ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={streamUrl}
+                        alt="YOLO11n Camera Feed"
+                        className="w-full h-full object-contain"
+                      />
+                      <div className="absolute top-3 left-3 flex items-center gap-1.5">
+                        <span className="relative flex h-2.5 w-2.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                        </span>
+                        <span className="text-[10px] font-medium text-white/80 bg-black/50 px-1.5 py-0.5 rounded">
+                          LIVE
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-center">
+                        <Leaf className="h-12 w-12 text-white/10 mx-auto mb-3" />
+                        <p className="text-white/30 text-sm">
+                          {systemStatus.running
+                            ? "Connecting to camera…"
+                            : "Start the system to view camera feed"}
+                        </p>
+                        <p className="text-white/20 text-xs mt-1">
+                          YOLO11n · IMX500 AI Camera
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <TabsList className="grid grid-cols-2 w-[200px]">
-                  <TabsTrigger value="live" className="flex items-center gap-1.5">
-                    <Video className="h-3.5 w-3.5" />
-                    Live
-                  </TabsTrigger>
-                  <TabsTrigger value="capture" className="flex items-center gap-1.5">
-                    <Camera className="h-3.5 w-3.5" />
-                    Capture
-                  </TabsTrigger>
-                </TabsList>
-              </div>
+              </CardContent>
+            </Card>
 
-              {/* Live Feed Tab — shows MJPEG stream from Pi with bounding boxes */}
-              <TabsContent value="live" className="mt-0">
-                <LiveFeed
-                  onClassification={(results) => {
-                    if (results.length > 0) {
-                      const primary = results[0]
-                      setNoVegetable(false)
-                      setClassificationData({
-                        classification: {
-                          top3: results,
-                          primaryLabel: primary.label,
-                          confidence: primary.confidence,
-                        },
-                        nutrition: null as any,
-                        recommendations: null as any,
-                      })
-                    }
-                  }}
-                  pollInterval={1500}
-                />
-              </TabsContent>
-
-              {/* Manual Capture Tab — browser camera snapshot */}
-              <TabsContent value="capture" className="mt-0">
-                <CameraCapture onImageCapture={handleImageCapture} onImageUpload={handleImageUpload} />
-              </TabsContent>
-            </Tabs>
+            {/* Classification Log */}
+            <ClassificationLog events={systemStatus.recent_events} />
           </div>
 
-          {/* Results Section */}
-          <div className="xl:col-span-1">
-            <ClassificationResults
-              results={classificationData?.classification.top3}
-              nutrition={classificationData?.nutrition}
-              recommendations={classificationData?.recommendations}
-              isLoading={isClassifying}
-              noVegetable={noVegetable}
-            />
+          {/* Right: Bin Status (1/3) */}
+          <div>
+            <h3 className="text-sm font-medium text-white/60 mb-3 tracking-wide uppercase">
+              Animal Feed Bins
+            </h3>
+            <BinStatusPanel bins={systemStatus.bins} />
           </div>
         </div>
       </main>
