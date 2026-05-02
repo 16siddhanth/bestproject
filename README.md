@@ -45,7 +45,7 @@ Automated vegetable waste peel classification and sorting system built with a Ra
 2. **Detection & Capture**: The YOLO11n model continuously monitors the camera feed. Upon detecting a vegetable peel, the conveyor belt halts immediately.
 3. **Classification**: The system waits 1.5 seconds for the object to settle, then captures a high-resolution frame. The YOLO11n neural network accurately classifies the vegetable peel (e.g., Potato Skins, Cabbage Leaves) and counts the number of visible peels.
 4. **Nutrient Matching**: The peel's nutritional profile (calories, protein, fat, fiber, calcium, phosphorus) is evaluated against the feed requirements of four animal types: Cattle, Goats, Poultry, and Pigs.
-5. **Sorting**: The peel is assigned to the bin of the animal that most needs those specific nutrients. The PCA9685 servo controller rotates the diverter arm to the appropriate bin (0°, 60°, 120°, or 180°).
+5. **Sorting**: The peel is assigned to the bin of the animal that most needs those specific nutrients. The PCA9685 servo controller rotates the diverter arm to the appropriate bin (30°, 70°, 110°, 150°).
 6. **Resumption**: The conveyor resumes operation. Four M5 MiniScales independently measure the accumulating weight in each bin to provide real-time updates to the dashboard.
 
 ## Supported Classes (13)

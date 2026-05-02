@@ -217,10 +217,10 @@ BIN_TO_ANIMAL: Dict[int, str] = {v: k for k, v in ANIMAL_TO_BIN.items()}
 
 # Servo angles (degrees) for each bin
 BIN_SERVO_ANGLES: Dict[int, float] = {
-    0: 0.0,    # Cattle
-    1: 60.0,   # Goats
-    2: 120.0,  # Poultry
-    3: 180.0,  # Pigs
+    0: 30.0,   # Cattle
+    1: 70.0,   # Goats
+    2: 110.0,  # Poultry
+    3: 150.0,  # Pigs
 }
 
 # Nutrient importance weights for scoring
