@@ -4,11 +4,10 @@
   "private": true,
   "scripts": {
     "build": "next build",
-    "predev": "pkill -f 'python3 system_controller.py' 2>/dev/null; sleep 0.3; true",
-    "dev": "python3 system_controller.py & next dev",
+    "dev": "fuser -k 5001/tcp 2>/dev/null; sleep 0.3; python3 system_controller.py & next dev",
     "dev:frontend": "next dev",
-    "dev:backend": "pkill -f 'python3 system_controller.py' 2>/dev/null; sleep 0.3; python3 system_controller.py",
-    "dev:simulate": "pkill -f 'python3 system_controller.py' 2>/dev/null; sleep 0.3; python3 system_controller.py --simulate & next dev",
+    "dev:backend": "fuser -k 5001/tcp 2>/dev/null; sleep 0.3; python3 system_controller.py",
+    "dev:simulate": "fuser -k 5001/tcp 2>/dev/null; sleep 0.3; python3 system_controller.py --simulate & next dev",
     "lint": "next lint",
     "start": "next start"
   },
