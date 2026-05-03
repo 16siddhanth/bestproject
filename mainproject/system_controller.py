@@ -186,114 +186,52 @@ class ServoController:
                 pass
 
 
-# ── M5 MiniScale via PCA9548A (HW-617) ───────────────────────
+# ── Simulated Scale Array (no hardware) ───────────────────────
 
 class MiniScaleArray:
-    """Read M5 MiniScales connected through a PCA9548A I2C multiplexer.
+    """Simulated weight tracking for all 4 bins.
 
-    Hardware reality:
-        SD1 / SC1 → Scale 2 (Bin 1 — Goats)   → REAL hardware
-        SD2 / SC2 → Scale 3 (Bin 2 — Poultry) → REAL hardware
-        SD0 / SC0 → Scale 1 (Bin 0 — Cattle)  → Not physically connected
-        SD3 / SC3 → Scale 4 (Bin 3 — Pigs)    → Not physically connected
-
-    Bins 0 and 3 use internally generated weights that update on each
-    classification event.
+    No I2C multiplexer or physical scales are used.
+    When a classification event occurs, a random weight (4–10 g) is added
+    to the target bin after a 4-second delay to simulate the peel
+    physically travelling down the chute and landing on the scale.
     """
-    PCA_ADDR = 0x70
-    SCALE_ADDR = 0x26
-    REG_WEIGHT_FLOAT = 0x10
-    REG_OFFSET = 0x50
-    REG_LP_FILTER = 0x80
-    REG_AVG_FILTER = 0x81
-    REG_EMA_FILTER = 0x82
-
-    # Channels with working hardware scales
-    _REAL_CHANNELS = {1, 2}
 
     def __init__(self, simulate=False):
-        self._simulate = simulate
-        self._bus = None
-        # Accumulated weights for non-hardware channels
-        self._gen_weights = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0}
-        self._sim_weights = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0}
-        self._connected = {0: False, 1: False, 2: False, 3: False}
-        if not simulate:
-            try:
-                smbus2 = importlib.import_module("smbus2")
-                self._bus = smbus2.SMBus(1)
-                self._probe_channels()
-            except Exception:
-                self._simulate = True
-
-    def _probe_channels(self):
-        """Check which mux channels have a scale attached and configure them."""
-        for ch in self._REAL_CHANNELS:
-            try:
-                self._select_channel(ch)
-                self._bus.read_i2c_block_data(self.SCALE_ADDR, 0xFE, 1)  # REG_FW_VERSION
-                self._connected[ch] = True
-
-                # Configure filters (LP on, 20 avg, 10 EMA)
-                self._bus.write_i2c_block_data(self.SCALE_ADDR, self.REG_LP_FILTER, [1])
-                self._bus.write_i2c_block_data(self.SCALE_ADDR, self.REG_AVG_FILTER, [20])
-                self._bus.write_i2c_block_data(self.SCALE_ADDR, self.REG_EMA_FILTER, [10])
-            except Exception:
-                self._connected[ch] = False
-
-    def _select_channel(self, ch: int):
-        if self._bus:
-            self._bus.write_byte(self.PCA_ADDR, 1 << ch)
-            time.sleep(0.05)
+        self._weights = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0}
+        self._lock = threading.Lock()
 
     def read_weight(self, bin_id: int) -> float:
-        if self._simulate:
-            return self._sim_weights.get(bin_id, 0.0)
-        # Non-hardware channels: return internally generated weight
-        if bin_id not in self._REAL_CHANNELS:
-            return self._gen_weights.get(bin_id, 0.0)
-        # Real hardware read
-        if not self._connected.get(bin_id, False):
-            return 0.0
-        try:
-            self._select_channel(bin_id)
-            data = bytes(self._bus.read_i2c_block_data(self.SCALE_ADDR, self.REG_WEIGHT_FLOAT, 4))
-            return struct.unpack_from("<f", data)[0]
-        except Exception:
-            return 0.0
+        with self._lock:
+            return self._weights.get(bin_id, 0.0)
 
     def record_classification_weight(self, bin_id: int):
-        """After a classification assigns peels to a non-hardware bin,
-        add a realistic weight increment."""
-        if bin_id not in self._REAL_CHANNELS:
-            self._gen_weights[bin_id] += round(random.uniform(4.0, 9.0), 1)
+        """Schedule a random weight addition 4 seconds after classification."""
+        def _delayed_add():
+            time.sleep(4.0)
+            increment = round(random.uniform(4.0, 10.0), 1)
+            with self._lock:
+                self._weights[bin_id] = self._weights.get(bin_id, 0.0) + increment
+            print(f"[SCALE] Bin {bin_id} += {increment}g  (total: {self._weights[bin_id]:.1f}g)")
+
+        t = threading.Thread(target=_delayed_add, daemon=True)
+        t.start()
 
     def tare(self, bin_id: int):
-        if self._simulate:
-            self._sim_weights[bin_id] = 0.0; return
-        if bin_id not in self._REAL_CHANNELS:
-            self._gen_weights[bin_id] = 0.0; return
-        if not self._connected.get(bin_id, False):
-            return
-        try:
-            self._select_channel(bin_id)
-            time.sleep(1.0)
-            self._bus.write_i2c_block_data(self.SCALE_ADDR, self.REG_OFFSET, [1])
-            time.sleep(1.5)
-        except Exception:
-            pass
+        with self._lock:
+            self._weights[bin_id] = 0.0
 
     def tare_all(self):
-        for i in range(4): self.tare(i)
+        with self._lock:
+            for k in self._weights:
+                self._weights[k] = 0.0
 
     @property
     def connected_count(self) -> int:
-        return sum(1 for v in self._connected.values() if v)
+        return 4  # All bins are "connected" (simulated)
 
     def close(self):
-        if self._bus:
-            try: self._bus.close()
-            except Exception: pass
+        pass
 
 
 # ── AI Classifier (internal) ──────────────────────────────────
