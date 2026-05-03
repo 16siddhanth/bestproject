@@ -558,10 +558,9 @@ class SystemController:
             picamera2_mod = importlib.import_module("picamera2")
             Picamera2 = picamera2_mod.Picamera2
             print("[CAM] picamera2 module loaded")
-        except ImportError as e:
-            print(f"[HW] Camera: NOT AVAILABLE (picamera2 not installed: {e})")
-            self.camera_connected = False
-            self.hw_status["camera"] = "simulated"
+        except Exception as e:
+            print(f"[WARN] picamera2 not available ({e}). Trying cv2 fallback...")
+            self._start_cv2_fallback()
             return
 
         try:
@@ -587,6 +586,35 @@ class SystemController:
         except Exception as e:
             print(f"[HW] Camera: NOT AVAILABLE ({e})")
             import traceback; traceback.print_exc()
+            self.camera_connected = False
+            self.hw_status["camera"] = "simulated"
+
+    def _start_cv2_fallback(self):
+        """Attempt 3: Basic OpenCV V4L2 fallback if picamera2 is completely broken."""
+        print("[CAM] Attempting cv2.VideoCapture fallback...")
+        try:
+            cv2 = importlib.import_module("cv2")
+            cap = cv2.VideoCapture(0)
+            if not cap.isOpened():
+                raise RuntimeError("Cannot open /dev/video0")
+            
+            # Read a test frame
+            ret, frame = cap.read()
+            if not ret:
+                raise RuntimeError("Cannot read frame from /dev/video0")
+                
+            print(f"[CAM] cv2 test frame captured: shape={frame.shape}, dtype={frame.dtype}")
+            
+            self._cv2_cap = cap
+            self.camera_connected = True
+            self.camera_mode = "cv2"
+            self.hw_status["camera"] = "active"
+            print("[HW] Camera: OK (cv2 fallback, no YOLO)")
+            
+            threading.Thread(target=self._cv2_frame_loop, daemon=True, name="cv2-frames").start()
+        except Exception as e:
+            print(f"[HW] Camera: COMPLETELY UNAVAILABLE ({e})")
+            print(">>> If you see a numpy.dtype size error, run: pip install numpy<2.0.0")
             self.camera_connected = False
             self.hw_status["camera"] = "simulated"
 
@@ -655,6 +683,35 @@ class SystemController:
                 if first_frame:
                     print(f"[CAM] Frame capture error: {e}")
             self._camera_stop.wait(0.033)  # ~30 fps target
+
+    def _cv2_frame_loop(self):
+        """Continuously grab frames from standard OpenCV capture."""
+        cv2 = importlib.import_module("cv2")
+        frame_count = 0
+        fps_start = time.monotonic()
+        first_frame = True
+
+        while not self._camera_stop.is_set() and hasattr(self, '_cv2_cap'):
+            try:
+                ret, frame = self._cv2_cap.read()
+                if ret:
+                    _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    with self._lock:
+                        self.latest_frame_jpeg = jpeg.tobytes()
+                    
+                    if first_frame:
+                        print(f"[CAM] First cv2 frame encoded ({len(self.latest_frame_jpeg)} bytes)")
+                        first_frame = False
+
+                    frame_count += 1
+                    elapsed = time.monotonic() - fps_start
+                    if elapsed >= 1.0:
+                        self.fps = frame_count / elapsed
+                        frame_count = 0
+                        fps_start = time.monotonic()
+            except Exception:
+                pass
+            self._camera_stop.wait(0.033)
 
     def _conveyor_loop(self):
         """Keep belt motor running while system is active."""
