@@ -1103,30 +1103,18 @@ def main() -> None:
                 stop_event.wait(args.poll_interval)
                 continue
 
-            if ir_trigger is None:
-                print("[SAFE-STOP] IR trigger is unavailable. Motor will remain stopped.")
-                cycler.pause()
-                motor_lockout = True
-                continue
-
-            try:
-                ir_detected = ir_trigger.is_detected()
-            except Exception as exc:
-                cycler.pause()
-                motor_lockout = True
-                print(f"[SAFE-STOP] IR sensor read failed: {exc}")
-                print("[SAFE-STOP] Fix IR wiring/backend and restart script.")
-                continue
+            state = inference_state.get_state()
+            yolo_detected = len(state.get("detections", [])) > 0
 
             now = time.monotonic()
 
-            if ir_detected:
+            if yolo_detected:
                 last_ir_detection_time = now
                 if not object_locked:
                     object_locked = True
                     scheduled_stop_time = now + max(0.0, args.ir_stop_delay)
                     print(
-                        "[EVENT] Object detected by IR sensor. "
+                        "[EVENT] Object detected by YOLO model. "
                         f"Motor will pause in {args.ir_stop_delay:.1f}s..."
                     )
 
