@@ -81,7 +81,7 @@ def main():
             import smbus2
             with smbus2.SMBus(1) as bus:
                 mode1 = bus.read_byte_data(I2C_ADDRESS, 0x00)
-                bus.write_byte_data(I2C_ADDRESS, 0x00, mode1 & ~0x01)
+                bus.write_byte_data(I2C_ADDRESS, 0x00, (mode1 & ~0x01) | 0x20)
         except Exception as e:
             print(f"Warning: Could not disable All-Call on PCA9685: {e}")
 

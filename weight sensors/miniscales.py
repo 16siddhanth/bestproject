@@ -379,7 +379,7 @@ def main():
         import smbus2
         with smbus2.SMBus(1) as bus:
             mode1 = bus.read_byte_data(0x40, 0x00)
-            bus.write_byte_data(0x40, 0x00, mode1 & ~0x01)
+            bus.write_byte_data(0x40, 0x00, (mode1 & ~0x01) | 0x20)
     except Exception:
         pass
 
