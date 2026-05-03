@@ -46,7 +46,7 @@ from nutrient_data import (
 # ── Constants ─────────────────────────────────────────────────
 
 PWM_FREQ_HZ = 1000
-CONVEYOR_DUTY_CYCLE = 50.0
+CONVEYOR_DUTY_CYCLE = 42.0
 VIBRATION_DUTY_CYCLE = 52.0
 VIBRATION_ON_SECONDS = 5.0
 VIBRATION_CYCLE_SECONDS = 12.0

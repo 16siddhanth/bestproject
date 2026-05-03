@@ -112,7 +112,7 @@ class HardwareController:
     SERVO_RESET_DELAY = 1.0    # Seconds to hold divert before resetting
 
     # Conveyor speed (PWM duty cycle %)
-    CONVEYOR_SPEED_NORMAL = 60
+    CONVEYOR_SPEED_NORMAL = 42
     CONVEYOR_SPEED_SLOW = 30
 
     # Debounce time for IR sensors (seconds)
