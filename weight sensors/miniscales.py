@@ -4,22 +4,30 @@ M5Stack MiniScales Unit — Raspberry Pi 5 over I2C (smbus2).
 The MiniScales has an onboard STM32 that handles the HX711;
 we only need to read/write I2C registers.
 
-Wiring (Grove HY2.0-4P → Pi 5 GPIO header):
-    Yellow (SDA)  → GPIO 2  (pin 3)
-    White  (SCL)  → GPIO 3  (pin 5)
-    Red    (VCC)  → 5 V     (pin 2 or 4)
-    Black  (GND)  → GND     (pin 6)
+Wiring (PCA9548A HW-617 Multiplexer):
+    Raspberry Pi 5              PCA9548A (HW-617)         M5 MiniScales
+    ─────────────               ──────────────────         ─────────────
+    Pin 3 (SDA) ──────────────▶ SDA
+    Pin 5 (SCL) ──────────────▶ SCL
+    Pin 2/4 (5V) ─────────────▶ VCC
+    Pin 6 (GND) ──────────────▶ GND
+                                SD0 / SC0 ───────────────▶ Scale 1 SDA/SCL
+                                SD1 / SC1 ───────────────▶ Scale 2 SDA/SCL
+                                SD2 / SC2 ───────────────▶ Scale 3 SDA/SCL
+                                SD3 / SC3 ───────────────▶ Scale 4 SDA/SCL
+
+    PCA9548A address : 0x70 (A0-A2 all low)
+    MiniScale address: 0x26 (same on every channel)
 
 Enable I2C on Pi 5 if not already:
     sudo raspi-config  →  Interface Options  →  I2C  →  Enable
-    # or: sudo dtparam i2c_arm=on
 
 Install dependency:
     sudo apt install python3-smbus2      # preferred on Pi OS Bookworm
     # or: pip install smbus2             (inside a venv)
 
-Verify the device is detected:
-    i2cdetect -y 1        # should show 0x26
+Verify the mux is detected:
+    i2cdetect -y 1        # should show 0x70
 """
 
 import struct

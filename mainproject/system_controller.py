@@ -478,6 +478,7 @@ class SystemController:
             return
         self.status = "stopping"
         self._stop_event.set()
+        self._camera_stop.set()
         time.sleep(1)
 
         if self._belt:
@@ -488,6 +489,20 @@ class SystemController:
             self._servo.cleanup()
         if self._scales:
             self._scales.close()
+
+        # Kill rpicam-vid subprocess if running
+        if hasattr(self, '_rpicam_proc') and self._rpicam_proc:
+            try:
+                self._rpicam_proc.terminate()
+                self._rpicam_proc.wait(timeout=3)
+            except Exception:
+                self._rpicam_proc.kill()
+        # Release cv2 capture if used
+        if hasattr(self, '_cv2_cap') and self._cv2_cap:
+            try:
+                self._cv2_cap.release()
+            except Exception:
+                pass
 
         self.running = False
         self.status = "idle"
@@ -541,80 +556,88 @@ class SystemController:
                     return
                 time.sleep(0.3)
             else:
-                print("[WARN] YOLO inference did not start in time, trying picamera2 fallback...")
+                print("[WARN] YOLO inference did not start in time, trying rpicam-vid fallback...")
 
         except ImportError:
-            print("[WARN] Inference module not available, trying picamera2 fallback...")
+            print("[WARN] Inference module not available, trying rpicam-vid fallback...")
         except Exception as e:
-            print(f"[WARN] Inference init failed ({e}), trying picamera2 fallback...")
+            print(f"[WARN] Inference init failed ({e}), trying rpicam-vid fallback...")
 
-        # ── Attempt 2: Raw picamera2 (no YOLO, just camera feed) ──
-        self._start_picamera_fallback()
+        # ── Attempt 2: rpicam-vid subprocess (bypasses broken Python picamera2) ──
+        self._start_rpicam_fallback()
 
-    def _start_picamera_fallback(self):
-        """Start a basic picamera2 MJPEG feed without YOLO."""
-        print("[CAM] Attempting picamera2 fallback...")
-        try:
-            picamera2_mod = importlib.import_module("picamera2")
-            Picamera2 = picamera2_mod.Picamera2
-            print("[CAM] picamera2 module loaded")
-        except Exception as e:
-            print(f"[WARN] picamera2 not available ({e}). Trying cv2 fallback...")
+    def _start_rpicam_fallback(self):
+        """Start rpicam-vid as a subprocess outputting MJPEG to stdout.
+        This bypasses the Python picamera2 module entirely (which is
+        broken due to numpy binary incompatibility with simplejpeg).
+        """
+        import subprocess, shutil
+
+        rpicam_bin = shutil.which("rpicam-vid") or shutil.which("libcamera-vid")
+        if not rpicam_bin:
+            print("[WARN] rpicam-vid not found on PATH. Trying cv2 fallback...")
             self._start_cv2_fallback()
             return
 
+        print(f"[CAM] Starting {rpicam_bin} subprocess (MJPEG to stdout)...")
         try:
-            cam = Picamera2()
-            config = cam.create_preview_configuration(
-                main={"size": (640, 480), "format": "RGB888"}
+            proc = subprocess.Popen(
+                [
+                    rpicam_bin,
+                    "-t", "0",                 # run forever
+                    "--width", "640",
+                    "--height", "480",
+                    "--codec", "mjpeg",
+                    "--quality", "80",           # JPEG quality (1-100)
+                    "--framerate", "15",
+                    "--nopreview",               # no preview window (Pi 5)
+                    "-o", "-",                   # output to stdout
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
             )
-            cam.configure(config)
-            cam.start()
-            print("[CAM] picamera2 started, testing capture...")
 
-            # Test capture a single frame to verify the pipeline
-            test_arr = cam.capture_array()
-            print(f"[CAM] Test frame captured: shape={test_arr.shape}, dtype={test_arr.dtype}")
+            # Wait briefly to verify it starts
+            time.sleep(1.5)
+            if proc.poll() is not None:
+                raise RuntimeError(f"rpicam-vid exited immediately (code {proc.returncode})")
 
-            self._picam = cam
+            self._rpicam_proc = proc
             self.camera_connected = True
-            self.camera_mode = "picamera"
+            self.camera_mode = "rpicam"
             self.hw_status["camera"] = "active"
-            print("[HW] Camera: OK (picamera2 fallback, no YOLO)")
-            # Start frame capture thread
-            threading.Thread(target=self._picamera_frame_loop, daemon=True, name="picam-frames").start()
+            print("[HW] Camera: OK (rpicam-vid MJPEG subprocess)")
+
+            threading.Thread(target=self._rpicam_frame_loop, daemon=True, name="rpicam-frames").start()
         except Exception as e:
-            print(f"[HW] Camera: NOT AVAILABLE ({e})")
-            import traceback; traceback.print_exc()
-            self.camera_connected = False
-            self.hw_status["camera"] = "simulated"
+            print(f"[WARN] rpicam-vid failed ({e}). Trying cv2 fallback...")
+            self._start_cv2_fallback()
 
     def _start_cv2_fallback(self):
-        """Attempt 3: Basic OpenCV V4L2 fallback if picamera2 is completely broken."""
+        """Attempt 3: Basic OpenCV V4L2 fallback."""
         print("[CAM] Attempting cv2.VideoCapture fallback...")
         try:
             cv2 = importlib.import_module("cv2")
             cap = cv2.VideoCapture(0)
             if not cap.isOpened():
                 raise RuntimeError("Cannot open /dev/video0")
-            
-            # Read a test frame
+
             ret, frame = cap.read()
             if not ret:
                 raise RuntimeError("Cannot read frame from /dev/video0")
-                
-            print(f"[CAM] cv2 test frame captured: shape={frame.shape}, dtype={frame.dtype}")
-            
+
+            print(f"[CAM] cv2 test frame captured: shape={frame.shape}")
+
             self._cv2_cap = cap
             self.camera_connected = True
             self.camera_mode = "cv2"
             self.hw_status["camera"] = "active"
-            print("[HW] Camera: OK (cv2 fallback, no YOLO)")
-            
+            print("[HW] Camera: OK (cv2 V4L2 fallback)")
+
             threading.Thread(target=self._cv2_frame_loop, daemon=True, name="cv2-frames").start()
         except Exception as e:
             print(f"[HW] Camera: COMPLETELY UNAVAILABLE ({e})")
-            print(">>> If you see a numpy.dtype size error, run: pip install numpy<2.0.0")
             self.camera_connected = False
             self.hw_status["camera"] = "simulated"
 
@@ -633,56 +656,55 @@ class SystemController:
                 pass
             self._camera_stop.wait(0.033)
 
-    def _picamera_frame_loop(self):
-        """Continuously grab frames from raw picamera2."""
-        # Try to load an encoder for JPEG
-        cv2 = None
-        PIL_Image = None
-        try:
-            cv2 = importlib.import_module("cv2")
-            print("[CAM] Using OpenCV for JPEG encoding")
-        except ImportError:
-            try:
-                PIL_Image = importlib.import_module("PIL").Image
-                print("[CAM] Using PIL for JPEG encoding")
-            except ImportError:
-                print("[CAM] WARNING: Neither OpenCV nor PIL available — no JPEG encoding!")
-                return
-
+    def _rpicam_frame_loop(self):
+        """Read MJPEG frames from rpicam-vid stdout by parsing JPEG SOI/EOI markers."""
+        SOI = b'\xff\xd8'  # JPEG Start Of Image
+        EOI = b'\xff\xd9'  # JPEG End Of Image
+        buf = b''
         frame_count = 0
         fps_start = time.monotonic()
         first_frame = True
+        proc = self._rpicam_proc
 
-        while not self._camera_stop.is_set() and self._picam:
+        while not self._camera_stop.is_set() and proc.poll() is None:
             try:
-                arr = self._picam.capture_array()
-                if cv2 is not None:
-                    bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
-                    _, jpeg = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                    with self._lock:
-                        self.latest_frame_jpeg = jpeg.tobytes()
-                elif PIL_Image is not None:
-                    from io import BytesIO
-                    img = PIL_Image.fromarray(arr)
-                    buf = BytesIO()
-                    img.save(buf, format="JPEG", quality=80)
-                    with self._lock:
-                        self.latest_frame_jpeg = buf.getvalue()
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                buf += chunk
 
-                if first_frame:
-                    print(f"[CAM] First frame encoded ({len(self.latest_frame_jpeg)} bytes)")
-                    first_frame = False
+                # Extract complete JPEG frames
+                while True:
+                    soi_idx = buf.find(SOI)
+                    if soi_idx == -1:
+                        buf = b''
+                        break
+                    eoi_idx = buf.find(EOI, soi_idx + 2)
+                    if eoi_idx == -1:
+                        # Trim anything before the SOI
+                        buf = buf[soi_idx:]
+                        break
+                    # Complete frame found
+                    jpeg = buf[soi_idx:eoi_idx + 2]
+                    buf = buf[eoi_idx + 2:]
 
-                frame_count += 1
-                elapsed = time.monotonic() - fps_start
-                if elapsed >= 1.0:
-                    self.fps = frame_count / elapsed
-                    frame_count = 0
-                    fps_start = time.monotonic()
-            except Exception as e:
-                if first_frame:
-                    print(f"[CAM] Frame capture error: {e}")
-            self._camera_stop.wait(0.033)  # ~30 fps target
+                    with self._lock:
+                        self.latest_frame_jpeg = jpeg
+
+                    if first_frame:
+                        print(f"[CAM] First rpicam frame ({len(jpeg)} bytes)")
+                        first_frame = False
+
+                    frame_count += 1
+                    elapsed = time.monotonic() - fps_start
+                    if elapsed >= 1.0:
+                        self.fps = frame_count / elapsed
+                        frame_count = 0
+                        fps_start = time.monotonic()
+            except Exception:
+                break
+
+        print("[CAM] rpicam-vid stream ended")
 
     def _cv2_frame_loop(self):
         """Continuously grab frames from standard OpenCV capture."""
@@ -698,7 +720,7 @@ class SystemController:
                     _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                     with self._lock:
                         self.latest_frame_jpeg = jpeg.tobytes()
-                    
+
                     if first_frame:
                         print(f"[CAM] First cv2 frame encoded ({len(self.latest_frame_jpeg)} bytes)")
                         first_frame = False
