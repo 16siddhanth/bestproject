@@ -213,6 +213,58 @@ def _test_scale():
         scale.close()
 
 
+def _test_all_scales():
+    """Rapidly cycle through all 4 channels and print live weights side-by-side."""
+    print("\n╔══════════════════════════════════════╗")
+    print("║     Testing All MiniScales Live      ║")
+    print("╚══════════════════════════════════════╝")
+    print("Press Ctrl-C to quit.\n")
+
+    bus = smbus2.SMBus(1)
+    
+    # Pre-check which ones are connected
+    connected = {}
+    for ch in range(4):
+        try:
+            bus.write_byte(0x70, 1 << ch)
+            time.sleep(0.05)
+            bus.read_i2c_block_data(DEVICE_ADDR, REG_FW_VERSION, 1)
+            connected[ch] = True
+        except OSError:
+            connected[ch] = False
+
+    if not any(connected.values()):
+        print("[ERROR] No scales detected on any multiplexer channel!")
+        bus.close()
+        return
+
+    try:
+        while True:
+            output_parts = []
+            for ch in range(4):
+                if not connected[ch]:
+                    output_parts.append(f"S{ch+1}: ---")
+                    continue
+                
+                try:
+                    bus.write_byte(0x70, 1 << ch)
+                    # Use a very tiny sleep when cycling rapidly
+                    time.sleep(0.02)
+                    data = bytes(bus.read_i2c_block_data(DEVICE_ADDR, REG_WEIGHT_FLOAT, 4))
+                    weight = struct.unpack_from("<f", data)[0]
+                    output_parts.append(f"S{ch+1}: {weight:>6.1f}g")
+                except OSError:
+                    output_parts.append(f"S{ch+1}: ERR")
+
+            print("\r" + "  |  ".join(output_parts) + "   ", end="", flush=True)
+            time.sleep(0.2)  # Update 5 times a second
+            
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        bus.close()
+
+
 def _calibrate_all():
     """Scan all 4 mux channels, tare every connected scale to 0 g."""
     print("\n╔══════════════════════════════════════╗")
@@ -267,19 +319,23 @@ def main():
     print("==========================================\n")
     print("  1) Test a single scale")
     print("  2) Calibrate all scales (tare to 0 g)")
+    print("  3) Test all scales simultaneously")
     print()
 
     while True:
         try:
-            choice = input("Select mode (1 or 2): ").strip()
+            choice = input("Select mode (1, 2, or 3): ").strip()
             if choice == '1':
                 _test_scale()
                 return
             elif choice == '2':
                 _calibrate_all()
                 return
+            elif choice == '3':
+                _test_all_scales()
+                return
             else:
-                print("Invalid choice. Please enter 1 or 2.")
+                print("Invalid choice. Please enter 1, 2, or 3.")
         except KeyboardInterrupt:
             print("\nExiting.")
             return
