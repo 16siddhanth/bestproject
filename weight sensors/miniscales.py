@@ -191,11 +191,12 @@ def _test_single():
         scale.set_ema_filter(10)
         time.sleep(0.3)
 
-        # Tare on startup
+        # Auto-tare on startup
         print("Taring — keep the scale empty...")
         time.sleep(1)
         scale.tare()
         time.sleep(1)
+
         print("Ready — place weight on scale.  Ctrl-C to quit.\n")
 
         while True:
@@ -247,8 +248,15 @@ def _test_all():
             bus.write_i2c_block_data(DEVICE_ADDR, REG_LP_FILTER, [1])
             bus.write_i2c_block_data(DEVICE_ADDR, REG_AVG_FILTER, [20])
             bus.write_i2c_block_data(DEVICE_ADDR, REG_EMA_FILTER, [10])
+            time.sleep(0.1)
+            
+            # Tare each connected scale
+            bus.write_i2c_block_data(DEVICE_ADDR, REG_OFFSET, [1])
+            time.sleep(0.1)
         except OSError:
             connected[ch] = False
+
+    time.sleep(1) # Let all scales finish taring
 
     conn_list = [f"S{ch+1}" for ch, ok in connected.items() if ok]
     miss_list = [f"S{ch+1}" for ch, ok in connected.items() if not ok]
@@ -288,78 +296,77 @@ def _test_all():
 
 
 # ══════════════════════════════════════════════════════════════════
-#  Option 3 — Calibrate (Tare All Scales)
+#  Option 3 — Calibrate Scale Factor (GAP) to 20g
 # ══════════════════════════════════════════════════════════════════
 
 def _calibrate():
-    """Tare all connected scales to 0 g.
-
-    This is identical to physically pressing the button on each
-    MiniScale — it writes 0x01 to register 0x50 (SET_OFFSET_REG)
-    on the STM32 firmware, which resets the zero point.
+    """Calibrates the scale's internal multiplier using a 20g weight.
+    This permanently fixes wild 18,000g readings caused by corrupt memory.
     """
     print("\n╔══════════════════════════════════════╗")
-    print("║     Calibrate — Tare All Scales      ║")
+    print("║     Calibrate Scale Factor (20g)     ║")
     print("╚══════════════════════════════════════╝")
-    print("This does the same thing as pressing the button on each scale.")
-    print("Make sure ALL scales are EMPTY before proceeding.\n")
+    print("This will fix scales that are showing wild, impossible numbers.\n")
 
+    while True:
+        try:
+            choice = input("Which scale is broken? (1, 2, 3, or 4): ").strip()
+            if choice in ['1', '2', '3', '4']:
+                mux_channel = int(choice) - 1
+                break
+            else:
+                print("Invalid choice. Please enter 1, 2, 3, or 4.")
+        except KeyboardInterrupt:
+            print("\nCancelled.")
+            return
+
+    scale = MiniScales(mux_channel=mux_channel)
     try:
-        input("Press Enter when ready (or Ctrl-C to cancel)... ")
+        try:
+            scale.get_firmware_version()
+        except OSError:
+            print(f"\n[ERROR] Scale {choice} not detected on the multiplexer.")
+            return
+            
+        # Ensure filters are on for a stable read
+        scale.set_lp_filter(True)
+        scale.set_avg_filter(20)
+        scale.set_ema_filter(10)
+        time.sleep(0.5)
+
+        print(f"\n--- Step 1: Empty the scale ---")
+        input("Remove all items from the scale and press Enter...")
+        print("Taring scale to 0g...")
+        scale.tare()
+        time.sleep(2)  # Wait for stable zero
+        raw_empty = scale.get_raw_adc()
+
+        print(f"\n--- Step 2: Place 20g Weight ---")
+        input("Place EXACTLY 20g on the scale and press Enter...")
+        print("Reading new weight...")
+        time.sleep(2)  # Wait for stable reading
+        raw_loaded = scale.get_raw_adc()
+
+        if raw_loaded == raw_empty:
+            print("\n[ERROR] The RAW values did not change! (Wiring or Load Cell is broken)")
+            return
+
+        # Calculate new GAP
+        new_gap = (raw_loaded - raw_empty) / 20.0
+        print(f"\nCalculated new Scale Factor: {new_gap:.4f}")
+        
+        # Save to memory
+        scale.set_gap(new_gap)
+        time.sleep(0.5)
+        
+        test_weight = scale.get_weight()
+        print(f"Verification reading: {test_weight:.1f} g")
+        print("\nCalibration successful! The scale should now read correctly.")
+        
     except KeyboardInterrupt:
         print("\nCancelled.")
-        return
-
-    bus = smbus2.SMBus(1)
-    found = 0
-
-    for ch in range(4):
-        name = SCALE_NAMES[ch]
-
-        # Select mux channel
-        try:
-            bus.write_byte(MUX_ADDR, 1 << ch)
-            time.sleep(0.05)
-        except OSError:
-            print(f"  [✗] {name} — mux channel failed")
-            continue
-
-        # Check if scale is present
-        try:
-            bus.read_i2c_block_data(DEVICE_ADDR, REG_FW_VERSION, 1)
-        except OSError:
-            print(f"  [–] {name} — not connected")
-            continue
-
-        # Enable filters first so readings stabilize
-        try:
-            bus.write_i2c_block_data(DEVICE_ADDR, REG_LP_FILTER, [1])
-            bus.write_i2c_block_data(DEVICE_ADDR, REG_AVG_FILTER, [20])
-            bus.write_i2c_block_data(DEVICE_ADDR, REG_EMA_FILTER, [10])
-        except OSError:
-            pass
-
-        # Let the filters settle
-        print(f"  [...] {name} — settling...", end="", flush=True)
-        time.sleep(1.5)
-
-        # Tare: write 0x01 to REG_OFFSET (same as pressing button)
-        try:
-            bus.write_i2c_block_data(DEVICE_ADDR, REG_OFFSET, [1])
-            time.sleep(1.5)  # Let the new zero stabilize
-
-            # Re-select channel (in case mux drifted) and verify
-            bus.write_byte(MUX_ADDR, 1 << ch)
-            time.sleep(0.05)
-            data = bytes(bus.read_i2c_block_data(DEVICE_ADDR, REG_WEIGHT_FLOAT, 4))
-            weight = struct.unpack_from("<f", data)[0]
-            print(f"\r  [✓] {name} — tared (reads {weight:+.1f} g)")
-            found += 1
-        except OSError as e:
-            print(f"\r  [✗] {name} — tare failed ({e})")
-
-    bus.close()
-    print(f"\nCalibration complete: {found}/4 scales zeroed.\n")
+    finally:
+        scale.close()
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -371,7 +378,7 @@ def main():
     print("==========================================\n")
     print("  1) Test a single scale")
     print("  2) Test all scales simultaneously")
-    print("  3) Calibrate (tare all to 0 g)")
+    print("  3) Calibrate Scale Factor (requires 20g weight)")
     print()
 
     while True:
