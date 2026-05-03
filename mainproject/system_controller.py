@@ -8,7 +8,7 @@ Hardware:
   - 1x BTS7960 for belt motor (GPIO 4,17,27,22)
   - 1x BTS7960 for vibration motor (GPIO 18,23,24,25)
   - 1x PCA9685 servo (channel 0) for bin diverter
-  - 4x M5 MiniScales via TCA9548A I2C multiplexer
+  - 4x simulated bin weight sensors (4–10g random increments per classification)
   - Raspberry Pi AI Camera (IMX500) with YOLO11n (object detection triggers belt stop)
 
 Run:
@@ -23,7 +23,6 @@ import json
 import os
 import random
 import re
-import struct
 import sys
 import threading
 import time
@@ -56,9 +55,9 @@ POST_STOP_CAPTURE_DELAY = 2.0  # seconds to wait after belt stops before capturi
 
 # ── Motor Pin Configs ─────────────────────────────────────────
 # Pin layout (Raspberry Pi 5):
-#   Pin 1  (3.3V)     → TCA9548A VIN, PCA9685 VCC
-#   Pin 3  (GPIO2/SDA)→ TCA9548A SDA, PCA9685 SDA
-#   Pin 5  (GPIO3/SCL)→ TCA9548A SCL, PCA9685 SCL
+#   Pin 1  (3.3V)     → PCA9685 VCC
+#   Pin 3  (GPIO2/SDA)→ PCA9685 SDA
+#   Pin 5  (GPIO3/SCL)→ PCA9685 SCL
 #   Pin 7  (GPIO4)    → BTS7960 #1 RPWM  (Belt)
 #   Pin 11 (GPIO17)   → BTS7960 #1 LPWM
 #   Pin 13 (GPIO27)   → BTS7960 #1 R_EN
@@ -411,13 +410,10 @@ class SystemController:
         self.hw_status["servo"] = "active" if self._servo._ready else "simulated"
         print(f"[HW] Servo (PCA9685): {'OK' if self._servo._ready else 'SIMULATED'}")
 
-        # Scales (TCA9548A + 4× M5 MiniScale)
-        self._scales = MiniScaleArray(simulate=self.simulate)
-        self.hw_status["scales"] = "active" if not self._scales._simulate else "simulated"
-        if not self._scales._simulate:
-            print(f"[HW] Scales (PCA9548A): {self._scales.connected_count}/4 connected")
-        else:
-            print("[HW] Scales (PCA9548A): SIMULATED")
+        # Scales (simulated — no hardware multiplexer)
+        self._scales = MiniScaleArray()
+        self.hw_status["scales"] = "active"
+        print(f"[HW] Scales: OK (simulated, {self._scales.connected_count} bins)")
         self._scales.tare_all()
 
         # Print hardware summary
@@ -763,7 +759,6 @@ class SystemController:
                             print("[CLASSIFY] No result from AI classifier")
 
                     # Resume conveyor
-                    # Resume conveyor
                     self._belt.motor_forward(CONVEYOR_DUTY_CYCLE)
                     self.status = "running"
 
@@ -797,15 +792,6 @@ class SystemController:
         self.status = "sorting"
         time.sleep(0.5)
 
-        # Update bin state
-        for p in peels:
-            self.bin_states[optimal_bin].add_peel(
-                p["label"], count=p.get("count", 1)
-            )
-
-        # Update weight reading for this bin
-        self._scales.record_classification_weight(optimal_bin)
-
         # Log event
         event = ClassificationEvent(
             timestamp=time.time(),
@@ -815,6 +801,16 @@ class SystemController:
             assigned_animal=animal,
         )
         with self._lock:
+            # Update bin state
+            for p in peels:
+                self.bin_states[optimal_bin].add_peel(
+                    p["label"], count=p.get("count", 1)
+                )
+
+            # Update weight reading for this bin
+            self._scales.record_classification_weight(optimal_bin)
+
+            # Log event
             self.classification_log.append(event)
             if len(self.classification_log) > 100:
                 self.classification_log = self.classification_log[-100:]
@@ -827,7 +823,8 @@ class SystemController:
         while not self._stop_event.is_set():
             for bin_id in range(4):
                 weight = self._scales.read_weight(bin_id)
-                self.bin_states[bin_id].update_actual_weight(weight)
+                with self._lock:
+                    self.bin_states[bin_id].update_actual_weight(weight)
             self._stop_event.wait(2.0)
 
     def get_status(self) -> dict:
