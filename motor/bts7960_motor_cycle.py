@@ -96,12 +96,13 @@ class _RPiGPIODualMotorBackend:
         for pin in self._enable_pins:
             GPIO.output(pin, GPIO.HIGH)
 
-    def motor_forward(self, duty_cycle: float) -> None:
-        duty = max(0.0, min(100.0, duty_cycle))
+    def motor_forward(self, m1_duty: float = 46.0, m2_duty: float = 70.0) -> None:
+        m1 = max(0.0, min(100.0, m1_duty))
+        m2 = max(0.0, min(100.0, m2_duty))
         self._m1_lpwm.ChangeDutyCycle(0)
         self._m2_lpwm.ChangeDutyCycle(0)
-        self._m1_rpwm.ChangeDutyCycle(duty)
-        self._m2_rpwm.ChangeDutyCycle(duty)
+        self._m1_rpwm.ChangeDutyCycle(m1)
+        self._m2_rpwm.ChangeDutyCycle(m2)
 
     def motor_stop(self) -> None:
         for pwm in self._pwm_channels:
@@ -158,11 +159,11 @@ class _LGPIODualMotorBackend:
         duty = max(0.0, min(100.0, duty_cycle))
         self._lgpio.tx_pwm(self._chip, pin, PWM_FREQ_HZ, duty)
 
-    def motor_forward(self, duty_cycle: float) -> None:
+    def motor_forward(self, m1_duty: float = 46.0, m2_duty: float = 70.0) -> None:
         self._set_pwm(Pins.M1_LPWM, 0)
         self._set_pwm(Pins.M2_LPWM, 0)
-        self._set_pwm(Pins.M1_RPWM, duty_cycle)
-        self._set_pwm(Pins.M2_RPWM, duty_cycle)
+        self._set_pwm(Pins.M1_RPWM, m1_duty)
+        self._set_pwm(Pins.M2_RPWM, m2_duty)
 
     def motor_stop(self) -> None:
         for pin in self._pwm_pins:
@@ -205,8 +206,8 @@ class BTS7960MotorController:
             f"Details: {details}"
         )
 
-    def motor_forward(self, duty_cycle: float) -> None:
-        self._backend.motor_forward(duty_cycle)
+    def motor_forward(self, m1_duty: float = 46.0, m2_duty: float = 70.0) -> None:
+        self._backend.motor_forward(m1_duty, m2_duty)
 
     def motor_stop(self) -> None:
         self._backend.motor_stop()
@@ -218,20 +219,22 @@ class BTS7960MotorController:
 def main() -> None:
     args = parse_args()
 
-    duty_cycle = max(0.0, min(100.0, args.speed))
+    m1_duty = args.speed_belt
+    m2_duty = args.speed_vibration
 
     try:
         controller = BTS7960MotorController()
     except RuntimeError as exc:
         raise SystemExit(f"[ERROR] {exc}") from exc
     print(
-        "Starting BTS7960 continuous run: both motors run together "
-        f"at {duty_cycle:.1f}% speed. "
+        "Starting BTS7960 continuous run:\n"
+        f"  - Belt (M1) at {m1_duty:.1f}% speed.\n"
+        f"  - Vibration (M2) at {m2_duty:.1f}% speed.\n"
         "Press Ctrl+C to stop."
     )
 
     try:
-        controller.motor_forward(duty_cycle)
+        controller.motor_forward(m1_duty, m2_duty)
         while True:
             time.sleep(0.2)
     except KeyboardInterrupt:
@@ -247,10 +250,16 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument(
-        "--speed",
+        "--speed-belt",
         type=float,
-        default=DEFAULT_MOTOR_DUTY_CYCLE,
-        help="Dual motor duty cycle percent (0-100)",
+        default=46.0,
+        help="Belt motor (M1) duty cycle percent (0-100)",
+    )
+    parser.add_argument(
+        "--speed-vibration",
+        type=float,
+        default=70.0,
+        help="Vibration motor (M2) duty cycle percent (0-100)",
     )
     return parser.parse_args()
 
