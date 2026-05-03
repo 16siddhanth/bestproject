@@ -87,15 +87,15 @@ veggiefeed/
 └── README.md                     # This file
 ```
 
-## Hardware Wiring (GPIO/I2C)
+## Hardware Wiring (Raspberry Pi 5 GPIO / I2C)
 
 | Component | Interface / Pin | Notes |
 |-----------|-----------------|-------|
-| Conveyor M1 | GPIO 4, 17, 27, 22 | BTS7960 Driver 1 (RPWM, LPWM, R_EN, L_EN) |
-| Conveyor M2 | GPIO 18, 23, 24, 25 | BTS7960 Driver 2 (RPWM, LPWM, R_EN, L_EN) |
-| Vibration Motor | GPIO 5, 6, 13, 16 | BTS7960 Driver 3 (RPWM, LPWM, R_EN, L_EN) |
+| **Power** | Pin 1 (3.3 V) | TCA9548A VIN, PCA9685 VCC |
+| **I2C Bus** | Pin 3 (SDA), Pin 5 (SCL) | Shared by PCA9685 and TCA9548A |
+| Belt Motor | Pin 7 (GPIO4), Pin 11 (GPIO17), Pin 13 (GPIO27), Pin 15 (GPIO22) | BTS7960 #1 (RPWM, LPWM, R_EN, L_EN) |
+| Vibration Motor | Pin 12 (GPIO18), Pin 16 (GPIO23), Pin 18 (GPIO24), Pin 22 (GPIO25) | BTS7960 #2 (RPWM, LPWM, R_EN, L_EN) |
 | Servo Controller | I2C (Address 0x40) | PCA9685 — Servo on Channel 0 |
-| I2C Bus | Pi Pin 3 (SDA), Pin 5 (SCL) | Shared by PCA9685 and TCA9548A |
 | I2C Mux | I2C (Address 0x70) | TCA9548A (HW-617) — 4 downstream channels |
 | Bin 0 Scale (Cattle) | Mux SD0 / SC0 | M5 MiniScale (Address 0x26) |
 | Bin 1 Scale (Goats) | Mux SD1 / SC1 | M5 MiniScale (Address 0x26) |
@@ -107,7 +107,7 @@ veggiefeed/
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/health` | System health check |
-| `POST` | `/system/start` | Start the conveyor and monitoring |
+| `POST` | `/system/start` | Start the belt motor and monitoring |
 | `POST` | `/system/stop` | Stop all motors and inference |
 | `GET` | `/system/status`| Current state, bin weights, and events |
 | `GET` | `/system/stream`| MJPEG live video feed |
@@ -115,7 +115,7 @@ veggiefeed/
 
 ## Tech Stack
 
-- **Hardware**: Raspberry Pi 5, IMX500 AI Camera, 3× BTS7960 motor drivers, PCA9685 servo driver, TCA9548A I2C mux, 4× M5 MiniScales.
+- **Hardware**: Raspberry Pi 5, IMX500 AI Camera, 2× BTS7960 motor drivers, PCA9685 servo driver, TCA9548A I2C mux, 4× M5 MiniScales.
 - **AI/ML**: YOLO11n (Ultralytics), IMX500 on-device inference via picamera2.
 - **Backend**: Python 3.11, Flask.
 - **Frontend**: Next.js 14, TypeScript, Tailwind CSS, shadcn/ui.

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 
 interface HwStatus {
-  conveyor: string
+  belt: string
   vibration: string
   servo: string
   scales: string
@@ -33,7 +33,7 @@ const STATUS_LABELS: Record<string, { text: string; color: string }> = {
 }
 
 const HW_ICONS: Record<string, React.ReactNode> = {
-  conveyor: <Cog className="h-3 w-3" />,
+  belt: <Cog className="h-3 w-3" />,
   vibration: <Vibrate className="h-3 w-3" />,
   servo: <CircleDot className="h-3 w-3" />,
   scales: <Scale className="h-3 w-3" />,
@@ -41,7 +41,7 @@ const HW_ICONS: Record<string, React.ReactNode> = {
 }
 
 const HW_LABELS: Record<string, string> = {
-  conveyor: "Belt",
+  belt: "Belt",
   vibration: "Vibrator",
   servo: "Servo",
   scales: "Scales",

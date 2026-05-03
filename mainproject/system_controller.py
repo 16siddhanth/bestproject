@@ -5,8 +5,8 @@ VeggieFeed — Unified System Controller
 Central orchestrator for the automated vegetable-waste-to-animal-feed system.
 
 Hardware:
-  - 2x BTS7960 for conveyor motors (GPIO 4,17,27,22 and 18,23,24,25)
-  - 1x BTS7960 for vibration motor (GPIO 5,6,13,16)
+  - 1x BTS7960 for belt motor (GPIO 4,17,27,22)
+  - 1x BTS7960 for vibration motor (GPIO 18,23,24,25)
   - 1x PCA9685 servo (channel 0) for bin diverter
   - 4x M5 MiniScales via TCA9548A I2C multiplexer
   - Raspberry Pi AI Camera (IMX500) with YOLO11n (object detection triggers belt stop)
@@ -54,13 +54,24 @@ POST_STOP_CAPTURE_DELAY = 1.5  # seconds to wait after belt stops before capturi
 
 
 # ── Motor Pin Configs ─────────────────────────────────────────
+# Pin layout (Raspberry Pi 5):
+#   Pin 1  (3.3V)     → TCA9548A VIN, PCA9685 VCC
+#   Pin 3  (GPIO2/SDA)→ TCA9548A SDA, PCA9685 SDA
+#   Pin 5  (GPIO3/SCL)→ TCA9548A SCL, PCA9685 SCL
+#   Pin 7  (GPIO4)    → BTS7960 #1 RPWM  (Belt)
+#   Pin 11 (GPIO17)   → BTS7960 #1 LPWM
+#   Pin 13 (GPIO27)   → BTS7960 #1 R_EN
+#   Pin 15 (GPIO22)   → BTS7960 #1 L_EN
+#   Pin 12 (GPIO18)   → BTS7960 #2 RPWM  (Vibration)
+#   Pin 16 (GPIO23)   → BTS7960 #2 LPWM
+#   Pin 18 (GPIO24)   → BTS7960 #2 R_EN
+#   Pin 22 (GPIO25)   → BTS7960 #2 L_EN
 
-class ConveyorPins:
-    M1_RPWM = 4; M1_LPWM = 17; M1_R_EN = 27; M1_L_EN = 22
-    M2_RPWM = 18; M2_LPWM = 23; M2_R_EN = 24; M2_L_EN = 25
+class BeltPins:
+    RPWM = 4; LPWM = 17; R_EN = 27; L_EN = 22
 
 class VibrationPins:
-    RPWM = 5; LPWM = 6; R_EN = 13; L_EN = 16
+    RPWM = 18; LPWM = 23; R_EN = 24; L_EN = 25
 
 
 # ── Classification Event ─────────────────────────────────────
@@ -135,47 +146,6 @@ class BTS7960Controller:
             self._lgpio.gpio_write(self._chip, pin, 0)
         self._lgpio.gpiochip_close(self._chip)
 
-
-class DualConveyorController:
-    """Controls two synced BTS7960 drivers for the conveyor belt.
-    Each motor is initialized independently — if one fails, it falls
-    back to a simulated controller so the system can still start."""
-    def __init__(self, simulate=False):
-        self.m1_real = False
-        self.m2_real = False
-        if simulate:
-            self._m1 = SimulatedMotorController("conv1")
-            self._m2 = SimulatedMotorController("conv2")
-        else:
-            try:
-                self._m1 = BTS7960Controller(
-                    ConveyorPins.M1_RPWM, ConveyorPins.M1_LPWM,
-                    ConveyorPins.M1_R_EN, ConveyorPins.M1_L_EN, "conv1")
-                self.m1_real = True
-                print("[HW] Conveyor motor 1: OK")
-            except Exception as e:
-                print(f"[HW] Conveyor motor 1: SIMULATED ({e})")
-                self._m1 = SimulatedMotorController("conv1")
-            try:
-                self._m2 = BTS7960Controller(
-                    ConveyorPins.M2_RPWM, ConveyorPins.M2_LPWM,
-                    ConveyorPins.M2_R_EN, ConveyorPins.M2_L_EN, "conv2")
-                self.m2_real = True
-                print("[HW] Conveyor motor 2: OK")
-            except Exception as e:
-                print(f"[HW] Conveyor motor 2: SIMULATED ({e})")
-                self._m2 = SimulatedMotorController("conv2")
-
-    @property
-    def is_real(self) -> bool:
-        return self.m1_real or self.m2_real
-
-    def motor_forward(self, duty):
-        self._m1.motor_forward(duty); self._m2.motor_forward(duty)
-    def motor_stop(self):
-        self._m1.motor_stop(); self._m2.motor_stop()
-    def cleanup(self):
-        self._m1.cleanup(); self._m2.cleanup()
 
 
 # ── Servo Controller (PCA9685) ────────────────────────────────
@@ -304,8 +274,8 @@ def _extract_json(text: str) -> Optional[dict]:
 
 
 def classify_frame(frame_jpeg: bytes, model_name: str = "gemini-2.0-flash") -> Optional[List[Dict]]:
-    """Classify peels in the frame. Returns list of {label, confidence, count}."""
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    """Classify peels in the frame using an AI vision model. Returns list of {label, confidence, count}."""
+    api_key = os.environ.get("CLASSIFIER_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         return None
     try:
@@ -394,7 +364,7 @@ class SystemController:
 
         # Per-component hardware availability
         self.hw_status: Dict[str, str] = {
-            "conveyor": "unknown",     # "active" | "simulated" | "unknown"
+            "belt": "unknown",          # "active" | "simulated" | "unknown"
             "vibration": "unknown",
             "servo": "unknown",
             "scales": "unknown",
@@ -402,7 +372,7 @@ class SystemController:
         }
 
         # Hardware (initialized on start)
-        self._conveyor: Optional[DualConveyorController] = None
+        self._belt: Any = None
         self._vibration: Any = None
         self._servo: Optional[ServoController] = None
         self._scales: Optional[MiniScaleArray] = None
@@ -410,7 +380,7 @@ class SystemController:
         self._picam = None  # picamera2 fallback instance
 
         # AI model
-        self._ai_model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+        self._ai_model = os.environ.get("CLASSIFIER_MODEL", "gemini-2.0-flash")
 
         # Boot camera immediately (runs in background thread)
         if not simulate:
@@ -424,9 +394,21 @@ class SystemController:
         self._stop_event.clear()
 
         # ── Init each hardware component independently ────────
-        # Conveyor (dual BTS7960)
-        self._conveyor = DualConveyorController(simulate=self.simulate)
-        self.hw_status["conveyor"] = "active" if self._conveyor.is_real else "simulated"
+        # Belt motor (BTS7960 #1)
+        if self.simulate:
+            self._belt = SimulatedMotorController("belt")
+            self.hw_status["belt"] = "simulated"
+        else:
+            try:
+                self._belt = BTS7960Controller(
+                    BeltPins.RPWM, BeltPins.LPWM,
+                    BeltPins.R_EN, BeltPins.L_EN, "belt")
+                self.hw_status["belt"] = "active"
+                print("[HW] Belt motor: OK")
+            except Exception as e:
+                print(f"[HW] Belt motor: SIMULATED ({e})")
+                self._belt = SimulatedMotorController("belt")
+                self.hw_status["belt"] = "simulated"
 
         # Vibration motor (BTS7960)
         if self.simulate:
@@ -475,8 +457,8 @@ class SystemController:
         self._stop_event.set()
         time.sleep(1)
 
-        if self._conveyor:
-            self._conveyor.motor_stop(); self._conveyor.cleanup()
+        if self._belt:
+            self._belt.motor_stop(); self._belt.cleanup()
         if self._vibration:
             self._vibration.motor_stop(); self._vibration.cleanup()
         if self._servo:
@@ -501,6 +483,8 @@ class SystemController:
             model_path = str(RASPI_DIR / "models" / "coco_pretrained" / "imx500_network_yolo11n_pp.rpk")
             labels = load_labels(None, "detect", True)
 
+            inference_failed = threading.Event()
+
             def _run():
                 try:
                     run_detection_inference(
@@ -510,12 +494,19 @@ class SystemController:
                 except Exception as e:
                     print(f"[WARN] Inference error: {e}")
                     inference_state.is_running = False
+                    inference_failed.set()
 
-            threading.Thread(target=_run, daemon=True, name="inference").start()
+            inf_thread = threading.Thread(target=_run, daemon=True, name="inference")
+            inf_thread.start()
 
-            # Wait for camera (up to 30s)
+            # Wait for camera — but bail immediately if the thread crashes
             start = time.monotonic()
-            while time.monotonic() - start < 30:
+            while time.monotonic() - start < 15:
+                # Check if inference thread already died
+                if inference_failed.is_set() or not inf_thread.is_alive():
+                    print("[WARN] YOLO inference crashed, trying picamera2 fallback...")
+                    break
+
                 s = inference_state.get_state()
                 if s.get("is_running") and s.get("has_frame"):
                     self.camera_connected = True
@@ -526,8 +517,9 @@ class SystemController:
                     threading.Thread(target=self._yolo_frame_loop, daemon=True, name="yolo-frames").start()
                     return
                 time.sleep(0.3)
+            else:
+                print("[WARN] YOLO inference did not start in time, trying picamera2 fallback...")
 
-            print("[WARN] YOLO inference did not start in time, trying picamera2 fallback...")
         except ImportError:
             print("[WARN] Inference module not available, trying picamera2 fallback...")
         except Exception as e:
@@ -617,11 +609,11 @@ class SystemController:
             self._camera_stop.wait(0.033)  # ~30 fps target
 
     def _conveyor_loop(self):
-        """Keep conveyor running while system is active."""
-        self._conveyor.motor_forward(CONVEYOR_DUTY_CYCLE)
+        """Keep belt motor running while system is active."""
+        self._belt.motor_forward(CONVEYOR_DUTY_CYCLE)
         while not self._stop_event.is_set():
             self._stop_event.wait(0.1)
-        self._conveyor.motor_stop()
+        self._belt.motor_stop()
 
     def _vibration_loop(self):
         """Run vibration motor 5s every 15s."""
@@ -657,7 +649,7 @@ class SystemController:
                 if detections:
                     self.status = "detecting"
                     # Stop conveyor immediately on camera detection
-                    self._conveyor.motor_stop()
+                    self._belt.motor_stop()
                     print("[DETECT] Object detected by camera — belt stopped")
 
                     # Wait 1.5 seconds after belt stop for stable frame capture
@@ -680,7 +672,7 @@ class SystemController:
                             print("[CLASSIFY] No result from AI classifier")
 
                     # Resume conveyor
-                    self._conveyor.motor_forward(CONVEYOR_DUTY_CYCLE)
+                    self._belt.motor_forward(CONVEYOR_DUTY_CYCLE)
                     self.status = "running"
 
                     # Wait for object to clear the belt before next detection

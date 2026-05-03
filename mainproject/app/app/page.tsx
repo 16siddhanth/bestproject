@@ -12,7 +12,7 @@ import Link from "next/link"
 const POLL_INTERVAL = 1200 // ms
 
 interface HwStatus {
-  conveyor: string
+  belt: string
   vibration: string
   servo: string
   scales: string
@@ -82,7 +82,7 @@ export default function VeggieFeedApp() {
     camera_connected: false,
     fps: 0,
     vibration_active: false,
-    hw_status: { conveyor: "unknown", vibration: "unknown", servo: "unknown", scales: "unknown", camera: "unknown" },
+    hw_status: { belt: "unknown", vibration: "unknown", servo: "unknown", scales: "unknown", camera: "unknown" },
     bins: DEFAULT_BINS,
     recent_events: [],
   })
@@ -100,7 +100,7 @@ export default function VeggieFeedApp() {
           camera_connected: data.camera_connected ?? false,
           fps: data.fps ?? 0,
           vibration_active: data.vibration_active ?? false,
-          hw_status: data.hw_status ?? { conveyor: "unknown", vibration: "unknown", servo: "unknown", scales: "unknown", camera: "unknown" },
+          hw_status: data.hw_status ?? { belt: "unknown", vibration: "unknown", servo: "unknown", scales: "unknown", camera: "unknown" },
           bins: data.bins && Object.keys(data.bins).length > 0 ? data.bins : DEFAULT_BINS,
           recent_events: data.recent_events ?? [],
         })
