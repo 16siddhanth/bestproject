@@ -58,7 +58,7 @@ class MiniScales:
             # PCA9548A default address is 0x70
             try:
                 self.bus.write_byte(0x70, 1 << mux_channel)
-                time.sleep(0.01)
+                time.sleep(0.05)  # Wait for multiplexer and scale to settle
             except Exception as e:
                 print(f"Warning: Failed to set multiplexer channel: {e}")
 
@@ -156,7 +156,14 @@ def main():
     print(f"\nInitializing Scale {choice} (Mux Channel SD{mux_channel})...")
     scale = MiniScales(mux_channel=mux_channel)
     try:
-        fw = scale.get_firmware_version()
+        try:
+            fw = scale.get_firmware_version()
+        except OSError as e:
+            print(f"\n[ERROR] Scale {choice} not found on multiplexer channel SD{mux_channel}.")
+            print("Please check your wiring: ensure the scale is plugged into the correct port")
+            print("on the PCA9548A multiplexer and that the Pi's I2C pins are connected.")
+            return
+
         print(f"Scale {choice} connected  (FW v{fw})")
 
         # Green LED to confirm connection
@@ -192,7 +199,10 @@ def main():
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
-        scale.set_led(0, 0, 0)
+        try:
+            scale.set_led(0, 0, 0)
+        except OSError:
+            pass  # Ignore if scale wasn't reachable
         scale.close()
 
 
