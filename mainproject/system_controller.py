@@ -18,7 +18,6 @@ Run:
 from __future__ import annotations
 
 import argparse
-import base64
 import importlib
 import json
 import os
@@ -27,7 +26,6 @@ import struct
 import sys
 import threading
 import time
-import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -286,7 +284,7 @@ class MiniScaleArray:
             except Exception: pass
 
 
-# ── AI Classifier (hidden, uses Gemini 3.0 Flash) ────────────
+# ── AI Classifier (internal) ──────────────────────────────────
 
 def _extract_json(text: str) -> Optional[dict]:
     text = text.strip()
@@ -382,6 +380,7 @@ class SystemController:
         self.running = False
         self.status = "idle"  # idle, running, stopping
         self._stop_event = threading.Event()
+        self._camera_stop = threading.Event()
         self._lock = threading.Lock()
 
         # State
@@ -390,6 +389,7 @@ class SystemController:
         self.vibration_active = False
         self.latest_frame_jpeg: Optional[bytes] = None
         self.camera_connected = False
+        self.camera_mode = "none"  # "yolo" | "picamera" | "none"
         self.fps = 0.0
 
         # Per-component hardware availability
@@ -407,9 +407,14 @@ class SystemController:
         self._servo: Optional[ServoController] = None
         self._scales: Optional[MiniScaleArray] = None
         self._inference_state = None
+        self._picam = None  # picamera2 fallback instance
 
         # AI model
         self._ai_model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+
+        # Boot camera immediately (runs in background thread)
+        if not simulate:
+            threading.Thread(target=self._boot_camera, daemon=True, name="camera-boot").start()
 
     def start(self):
         if self.running:
@@ -455,10 +460,7 @@ class SystemController:
         total = len(self.hw_status)
         print(f"[SYSTEM] Hardware: {active_count}/{total} components active")
 
-        # Start inference (camera — always attempted)
-        self._start_inference()
-
-        # Start threads
+        # Start threads (camera already started on boot)
         threading.Thread(target=self._conveyor_loop, daemon=True, name="conveyor").start()
         threading.Thread(target=self._vibration_loop, daemon=True, name="vibration").start()
         threading.Thread(target=self._detection_loop, daemon=True, name="detection").start()
@@ -486,8 +488,10 @@ class SystemController:
         self.status = "idle"
         print("[SYSTEM] Stopped")
 
-    def _start_inference(self):
-        """Start YOLO11n camera inference in background."""
+    def _boot_camera(self):
+        """Start camera on boot. Tries YOLO11n inference first,
+        falls back to raw picamera2 if inference is unavailable."""
+        # ── Attempt 1: YOLO11n via IMX500 inference engine ────
         try:
             from inference.veggiefeed_inference import (
                 inference_state, load_labels, run_detection_inference,
@@ -509,23 +513,108 @@ class SystemController:
 
             threading.Thread(target=_run, daemon=True, name="inference").start()
 
-            # Wait for camera
+            # Wait for camera (up to 30s)
             start = time.monotonic()
-            while time.monotonic() - start < 120:
+            while time.monotonic() - start < 30:
                 s = inference_state.get_state()
                 if s.get("is_running") and s.get("has_frame"):
                     self.camera_connected = True
+                    self.camera_mode = "yolo"
                     self.hw_status["camera"] = "active"
-                    print("[HW] Camera (IMX500): OK")
+                    print("[HW] Camera: OK (YOLO11n inference)")
+                    # Start frame grabber thread
+                    threading.Thread(target=self._yolo_frame_loop, daemon=True, name="yolo-frames").start()
                     return
-                time.sleep(0.2)
+                time.sleep(0.3)
 
-            print("[WARN] Camera feed timeout")
-            self.hw_status["camera"] = "simulated"
+            print("[WARN] YOLO inference did not start in time, trying picamera2 fallback...")
         except ImportError:
-            print("[WARN] Inference module not available (not on Pi)")
+            print("[WARN] Inference module not available, trying picamera2 fallback...")
+        except Exception as e:
+            print(f"[WARN] Inference init failed ({e}), trying picamera2 fallback...")
+
+        # ── Attempt 2: Raw picamera2 (no YOLO, just camera feed) ──
+        self._start_picamera_fallback()
+
+    def _start_picamera_fallback(self):
+        """Start a basic picamera2 MJPEG feed without YOLO."""
+        try:
+            Picamera2 = importlib.import_module("picamera2").Picamera2
+            cam = Picamera2()
+            config = cam.create_preview_configuration(
+                main={"size": (640, 480), "format": "RGB888"}
+            )
+            cam.configure(config)
+            cam.start()
+            self._picam = cam
+            self.camera_connected = True
+            self.camera_mode = "picamera"
+            self.hw_status["camera"] = "active"
+            print("[HW] Camera: OK (picamera2 fallback, no YOLO)")
+            # Start frame capture thread
+            threading.Thread(target=self._picamera_frame_loop, daemon=True, name="picam-frames").start()
+        except Exception as e:
+            print(f"[HW] Camera: NOT AVAILABLE ({e})")
             self.camera_connected = False
             self.hw_status["camera"] = "simulated"
+
+    def _yolo_frame_loop(self):
+        """Continuously grab frames from the YOLO inference engine."""
+        while not self._camera_stop.is_set():
+            try:
+                if self._inference_state:
+                    frame = self._inference_state.get_frame_jpeg()
+                    if frame:
+                        with self._lock:
+                            self.latest_frame_jpeg = frame
+                    state = self._inference_state.get_state()
+                    self.fps = state.get("fps", 0.0)
+            except Exception:
+                pass
+            self._camera_stop.wait(0.033)
+
+    def _picamera_frame_loop(self):
+        """Continuously grab frames from raw picamera2."""
+        cv2 = None
+        try:
+            cv2 = importlib.import_module("cv2")
+        except ImportError:
+            pass
+
+        frame_count = 0
+        fps_start = time.monotonic()
+
+        while not self._camera_stop.is_set() and self._picam:
+            try:
+                arr = self._picam.capture_array()
+                if cv2 is not None:
+                    # Convert RGB→BGR for cv2, then encode to JPEG
+                    bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+                    _, jpeg = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    with self._lock:
+                        self.latest_frame_jpeg = jpeg.tobytes()
+                else:
+                    # Minimal fallback: try PIL
+                    try:
+                        from io import BytesIO
+                        PIL_Image = importlib.import_module("PIL.Image").Image
+                        img = PIL_Image.fromarray(arr)
+                        buf = BytesIO()
+                        img.save(buf, format="JPEG", quality=80)
+                        with self._lock:
+                            self.latest_frame_jpeg = buf.getvalue()
+                    except Exception:
+                        pass
+
+                frame_count += 1
+                elapsed = time.monotonic() - fps_start
+                if elapsed >= 1.0:
+                    self.fps = frame_count / elapsed
+                    frame_count = 0
+                    fps_start = time.monotonic()
+            except Exception:
+                pass
+            self._camera_stop.wait(0.033)  # ~30 fps target
 
     def _conveyor_loop(self):
         """Keep conveyor running while system is active."""
@@ -550,49 +639,57 @@ class SystemController:
             self.vibration_active = False
 
     def _detection_loop(self):
-        """Watch for YOLO camera detections → stop belt → wait 1.5s → capture frame → classify → sort."""
+        """Watch for YOLO camera detections → stop belt → wait 1.5s → capture frame → classify → sort.
+        Only active when YOLO inference is available (camera_mode == 'yolo').
+        In picamera fallback mode, detection is not possible (no YOLO), so this loop
+        does nothing — the user would need to trigger classification manually."""
         if not self._inference_state:
+            # picamera fallback mode — no YOLO detection available
+            print("[DETECT] No inference engine — detection loop inactive (picamera fallback)")
             return
 
         while not self._stop_event.is_set():
-            state = self._inference_state.get_state()
-            self.fps = state.get("fps", 0.0)
+            try:
+                state = self._inference_state.get_state()
 
-            frame = self._inference_state.get_frame_jpeg()
-            if frame:
-                with self._lock:
-                    self.latest_frame_jpeg = frame
+                # YOLO11n detects an object on camera → immediately stop belt
+                detections = state.get("detections", [])
+                if detections:
+                    self.status = "detecting"
+                    # Stop conveyor immediately on camera detection
+                    self._conveyor.motor_stop()
+                    print("[DETECT] Object detected by camera — belt stopped")
 
-            # YOLO11n detects an object on camera → immediately stop belt
-            detections = state.get("detections", [])
-            if detections:
-                self.status = "detecting"
-                # Stop conveyor immediately on camera detection
-                self._conveyor.motor_stop()
-                print("[DETECT] Object detected by camera — belt stopped")
+                    # Wait 1.5 seconds after belt stop for stable frame capture
+                    self.status = "classifying"
+                    if self._stop_event.wait(POST_STOP_CAPTURE_DELAY):
+                        break
 
-                # Wait 1.5 seconds after belt stop for stable frame capture
-                self.status = "classifying"
-                if self._stop_event.wait(POST_STOP_CAPTURE_DELAY):
-                    break
+                    # Capture frame for AI classification
+                    # Use inference frame if available, otherwise latest_frame_jpeg
+                    capture_frame = self._inference_state.get_frame_jpeg()
+                    if not capture_frame:
+                        with self._lock:
+                            capture_frame = self.latest_frame_jpeg
 
-                # Capture frame for AI classification
-                capture_frame = self._inference_state.get_frame_jpeg()
-                if capture_frame:
-                    peels = classify_frame(capture_frame, self._ai_model)
-                    if peels:
-                        self._process_classification(peels)
-                    else:
-                        print("[CLASSIFY] No result from AI classifier")
+                    if capture_frame:
+                        peels = classify_frame(capture_frame, self._ai_model)
+                        if peels:
+                            self._process_classification(peels)
+                        else:
+                            print("[CLASSIFY] No result from AI classifier")
 
-                # Resume conveyor
-                self._conveyor.motor_forward(CONVEYOR_DUTY_CYCLE)
-                self.status = "running"
+                    # Resume conveyor
+                    self._conveyor.motor_forward(CONVEYOR_DUTY_CYCLE)
+                    self.status = "running"
 
-                # Wait for object to clear the belt before next detection
-                self._stop_event.wait(2.0)
-            else:
-                self._stop_event.wait(0.15)
+                    # Wait for object to clear the belt before next detection
+                    self._stop_event.wait(2.0)
+                else:
+                    self._stop_event.wait(0.15)
+            except Exception as e:
+                print(f"[DETECT] Error: {e}")
+                self._stop_event.wait(1.0)
 
     def _process_classification(self, peels: List[Dict]):
         """Process classification result: match to bin, move servo, log event."""
@@ -673,10 +770,14 @@ class SystemController:
 
 def create_flask_app(controller: SystemController):
     from flask import Flask, Response, jsonify, request
-    from flask_cors import CORS
+    try:
+        from flask_cors import CORS
+    except ImportError:
+        CORS = None  # type: ignore
 
     app = Flask(__name__)
-    CORS(app)
+    if CORS:
+        CORS(app)
 
     @app.route("/health", methods=["GET"])
     def health():

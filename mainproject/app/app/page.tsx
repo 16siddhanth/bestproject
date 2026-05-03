@@ -163,7 +163,7 @@ export default function VeggieFeedApp() {
                 <WifiOff className="h-3 w-3" /> Disconnected
               </Badge>
             )}
-            {systemStatus.running && systemStatus.fps > 0 && (
+            {systemStatus.fps > 0 && (
               <Badge className="bg-zinc-800 text-zinc-300 border-0 text-xs flex items-center gap-1">
                 <Gauge className="h-3 w-3" /> {systemStatus.fps.toFixed(1)} FPS
               </Badge>
@@ -218,9 +218,9 @@ export default function VeggieFeedApp() {
                       <div className="text-center">
                         <Leaf className="h-12 w-12 text-white/10 mx-auto mb-3" />
                         <p className="text-white/30 text-sm">
-                          {systemStatus.running
+                          {systemStatus.connected
                             ? "Connecting to camera…"
-                            : "Start the system to view camera feed"}
+                            : "Waiting for backend…"}
                         </p>
                         <p className="text-white/20 text-xs mt-1">
                           YOLO11n · IMX500 AI Camera
