@@ -357,6 +357,9 @@ class SystemController:
         self._scales: Optional[MiniScaleArray] = None
         self._inference_state = None
         self._picam = None  # picamera2 fallback instance
+        self._camera_ready_event = threading.Event()
+        if simulate:
+            self._camera_ready_event.set()
 
         # AI model
         self._ai_model = os.environ.get("CLASSIFIER_MODEL", "gemini-2.0-flash")
@@ -369,7 +372,7 @@ class SystemController:
         if self.running:
             return
         self.running = True
-        self.status = "running"
+        self.status = "starting"
         self._stop_event.clear()
 
         # ── Init each hardware component independently ────────
@@ -421,12 +424,16 @@ class SystemController:
         total = len(self.hw_status)
         print(f"[SYSTEM] Hardware: {active_count}/{total} components active")
 
+        print("[SYSTEM] Waiting for camera to initialize...")
+        self._camera_ready_event.wait()
+
         # Start threads (camera already started on boot)
         threading.Thread(target=self._conveyor_loop, daemon=True, name="conveyor").start()
         threading.Thread(target=self._vibration_loop, daemon=True, name="vibration").start()
         threading.Thread(target=self._detection_loop, daemon=True, name="detection").start()
         threading.Thread(target=self._scale_reader_loop, daemon=True, name="scales").start()
 
+        self.status = "running"
         print("[SYSTEM] Started")
 
     def stop(self):
@@ -465,6 +472,12 @@ class SystemController:
         print("[SYSTEM] Stopped")
 
     def _boot_camera(self):
+        try:
+            self._boot_camera_internal()
+        finally:
+            self._camera_ready_event.set()
+
+    def _boot_camera_internal(self):
         """Start camera on boot. Tries YOLO11n inference first,
         falls back to raw picamera2 if inference is unavailable."""
         # ── Attempt 1: YOLO11n via IMX500 inference engine ────
@@ -699,22 +712,21 @@ class SystemController:
         self._belt.motor_stop()
 
     def _vibration_loop(self):
-        """Run vibration motor 5s, pause 8s, repeat."""
+        """Run vibration motor according to constants."""
         while not self._stop_event.is_set():
             # Turn on
             self.vibration_active = True
             self._vibration.motor_forward(VIBRATION_DUTY_CYCLE)
             
-            # Wait 5s
-            if self._stop_event.wait(5.0):
+            if self._stop_event.wait(VIBRATION_ON_SECONDS):
                 break
                 
             # Turn off
             self._vibration.motor_stop()
             self.vibration_active = False
             
-            # Wait 8s
-            if self._stop_event.wait(8.0):
+            pause_time = max(0, VIBRATION_CYCLE_SECONDS - VIBRATION_ON_SECONDS)
+            if self._stop_event.wait(pause_time):
                 break
 
     def _detection_loop(self):
