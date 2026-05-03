@@ -13,6 +13,14 @@ import Link from "next/link"
 const SYSTEM_API = process.env.NEXT_PUBLIC_SYSTEM_API || "http://localhost:5001"
 const POLL_INTERVAL = 1200
 
+interface HwStatus {
+  conveyor: string
+  vibration: string
+  servo: string
+  scales: string
+  camera: string
+}
+
 interface SystemStatus {
   connected: boolean
   status: string
@@ -20,6 +28,7 @@ interface SystemStatus {
   camera_connected: boolean
   fps: number
   vibration_active: boolean
+  hw_status: HwStatus
   bins: Record<string, any>
   recent_events: any[]
 }
@@ -75,6 +84,7 @@ export default function Dashboard() {
     camera_connected: false,
     fps: 0,
     vibration_active: false,
+    hw_status: { conveyor: "unknown", vibration: "unknown", servo: "unknown", scales: "unknown", camera: "unknown" },
     bins: DEFAULT_BINS,
     recent_events: [],
   })
@@ -92,6 +102,7 @@ export default function Dashboard() {
           camera_connected: data.camera_connected ?? false,
           fps: data.fps ?? 0,
           vibration_active: data.vibration_active ?? false,
+          hw_status: data.hw_status ?? { conveyor: "unknown", vibration: "unknown", servo: "unknown", scales: "unknown", camera: "unknown" },
           bins: data.bins && Object.keys(data.bins).length > 0 ? data.bins : DEFAULT_BINS,
           recent_events: data.recent_events ?? [],
         })
@@ -177,6 +188,7 @@ export default function Dashboard() {
             running={systemStatus.running}
             vibrationActive={systemStatus.vibration_active}
             connected={systemStatus.connected}
+            hwStatus={systemStatus.hw_status}
             onStart={handleStart}
             onStop={handleStop}
           />

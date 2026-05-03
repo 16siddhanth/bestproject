@@ -91,11 +91,16 @@ veggiefeed/
 
 | Component | Interface / Pin | Notes |
 |-----------|-----------------|-------|
-| Conveyor M1 | GPIO 4, 17, 27, 22 | BTS7960 Driver 1 |
-| Conveyor M2 | GPIO 18, 23, 24, 25 | BTS7960 Driver 2 |
-| Vibration Motor | GPIO 5, 6, 13, 16 | BTS7960 Driver 3 |
-| Servo Controller | I2C (Address 0x40) | PCA9685 (Servo on Channel 0) |
-| Bin Scales | I2C (Address 0x70) | TCA9548A Mux to 4× M5 MiniScales |
+| Conveyor M1 | GPIO 4, 17, 27, 22 | BTS7960 Driver 1 (RPWM, LPWM, R_EN, L_EN) |
+| Conveyor M2 | GPIO 18, 23, 24, 25 | BTS7960 Driver 2 (RPWM, LPWM, R_EN, L_EN) |
+| Vibration Motor | GPIO 5, 6, 13, 16 | BTS7960 Driver 3 (RPWM, LPWM, R_EN, L_EN) |
+| Servo Controller | I2C (Address 0x40) | PCA9685 — Servo on Channel 0 |
+| I2C Bus | Pi Pin 3 (SDA), Pin 5 (SCL) | Shared by PCA9685 and TCA9548A |
+| I2C Mux | I2C (Address 0x70) | TCA9548A (HW-617) — 4 downstream channels |
+| Bin 0 Scale (Cattle) | Mux SD0 / SC0 | M5 MiniScale (Address 0x26) |
+| Bin 1 Scale (Goats) | Mux SD1 / SC1 | M5 MiniScale (Address 0x26) |
+| Bin 2 Scale (Poultry) | Mux SD2 / SC2 | M5 MiniScale (Address 0x26) |
+| Bin 3 Scale (Pigs) | Mux SD3 / SC3 | M5 MiniScale (Address 0x26) |
 
 ## API Endpoints (Flask Server — port 5001)
 

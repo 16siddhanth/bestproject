@@ -139,18 +139,38 @@ class BTS7960Controller:
 
 
 class DualConveyorController:
-    """Controls two synced BTS7960 drivers for the conveyor belt."""
+    """Controls two synced BTS7960 drivers for the conveyor belt.
+    Each motor is initialized independently — if one fails, it falls
+    back to a simulated controller so the system can still start."""
     def __init__(self, simulate=False):
+        self.m1_real = False
+        self.m2_real = False
         if simulate:
             self._m1 = SimulatedMotorController("conv1")
             self._m2 = SimulatedMotorController("conv2")
         else:
-            self._m1 = BTS7960Controller(
-                ConveyorPins.M1_RPWM, ConveyorPins.M1_LPWM,
-                ConveyorPins.M1_R_EN, ConveyorPins.M1_L_EN, "conv1")
-            self._m2 = BTS7960Controller(
-                ConveyorPins.M2_RPWM, ConveyorPins.M2_LPWM,
-                ConveyorPins.M2_R_EN, ConveyorPins.M2_L_EN, "conv2")
+            try:
+                self._m1 = BTS7960Controller(
+                    ConveyorPins.M1_RPWM, ConveyorPins.M1_LPWM,
+                    ConveyorPins.M1_R_EN, ConveyorPins.M1_L_EN, "conv1")
+                self.m1_real = True
+                print("[HW] Conveyor motor 1: OK")
+            except Exception as e:
+                print(f"[HW] Conveyor motor 1: SIMULATED ({e})")
+                self._m1 = SimulatedMotorController("conv1")
+            try:
+                self._m2 = BTS7960Controller(
+                    ConveyorPins.M2_RPWM, ConveyorPins.M2_LPWM,
+                    ConveyorPins.M2_R_EN, ConveyorPins.M2_L_EN, "conv2")
+                self.m2_real = True
+                print("[HW] Conveyor motor 2: OK")
+            except Exception as e:
+                print(f"[HW] Conveyor motor 2: SIMULATED ({e})")
+                self._m2 = SimulatedMotorController("conv2")
+
+    @property
+    def is_real(self) -> bool:
+        return self.m1_real or self.m2_real
 
     def motor_forward(self, duty):
         self._m1.motor_forward(duty); self._m2.motor_forward(duty)
@@ -197,10 +217,25 @@ class ServoController:
                 pass
 
 
-# ── M5 MiniScale via TCA9548A ─────────────────────────────────
+# ── M5 MiniScale via TCA9548A (HW-617) ───────────────────────
 
 class MiniScaleArray:
-    """Read 4 M5 MiniScales connected through a TCA9548A I2C mux."""
+    """Read 4 M5 MiniScales connected through a TCA9548A I2C multiplexer.
+
+    I2C Wiring:
+        Raspberry Pi 5          TCA9548A (HW-617)         M5 MiniScales
+        ─────────────           ──────────────────         ─────────────
+        Pin 3 (SDA) ──────────▶ SDA                       
+        Pin 5 (SCL) ──────────▶ SCL                       
+                                SD0 / SC0 ───────────────▶ Scale 0 (Bin 0 — Cattle)  SDA/SCL
+                                SD1 / SC1 ───────────────▶ Scale 1 (Bin 1 — Goats)   SDA/SCL
+                                SD2 / SC2 ───────────────▶ Scale 2 (Bin 2 — Poultry) SDA/SCL
+                                SD3 / SC3 ───────────────▶ Scale 3 (Bin 3 — Pigs)    SDA/SCL
+
+    Addresses:
+        TCA9548A mux  : 0x70 (default, A0-A2 all low)
+        M5 MiniScale  : 0x26 (same on each mux channel)
+    """
     TCA_ADDR = 0x70
     SCALE_ADDR = 0x26
     REG_WEIGHT_FLOAT = 0x10
@@ -357,6 +392,15 @@ class SystemController:
         self.camera_connected = False
         self.fps = 0.0
 
+        # Per-component hardware availability
+        self.hw_status: Dict[str, str] = {
+            "conveyor": "unknown",     # "active" | "simulated" | "unknown"
+            "vibration": "unknown",
+            "servo": "unknown",
+            "scales": "unknown",
+            "camera": "unknown",
+        }
+
         # Hardware (initialized on start)
         self._conveyor: Optional[DualConveyorController] = None
         self._vibration: Any = None
@@ -374,23 +418,44 @@ class SystemController:
         self.status = "running"
         self._stop_event.clear()
 
-        # Init hardware
+        # ── Init each hardware component independently ────────
+        # Conveyor (dual BTS7960)
         self._conveyor = DualConveyorController(simulate=self.simulate)
+        self.hw_status["conveyor"] = "active" if self._conveyor.is_real else "simulated"
+
+        # Vibration motor (BTS7960)
         if self.simulate:
             self._vibration = SimulatedMotorController("vibration")
+            self.hw_status["vibration"] = "simulated"
         else:
             try:
                 self._vibration = BTS7960Controller(
                     VibrationPins.RPWM, VibrationPins.LPWM,
                     VibrationPins.R_EN, VibrationPins.L_EN, "vibration")
-            except Exception:
+                self.hw_status["vibration"] = "active"
+                print("[HW] Vibration motor: OK")
+            except Exception as e:
+                print(f"[HW] Vibration motor: SIMULATED ({e})")
                 self._vibration = SimulatedMotorController("vibration")
+                self.hw_status["vibration"] = "simulated"
 
+        # Servo (PCA9685)
         self._servo = ServoController(channel=0, simulate=self.simulate)
+        self.hw_status["servo"] = "active" if self._servo._ready else "simulated"
+        print(f"[HW] Servo (PCA9685): {'OK' if self._servo._ready else 'SIMULATED'}")
+
+        # Scales (TCA9548A + 4× M5 MiniScale)
         self._scales = MiniScaleArray(simulate=self.simulate)
+        self.hw_status["scales"] = "active" if not self._scales._simulate else "simulated"
+        print(f"[HW] Scales (TCA9548A): {'OK' if not self._scales._simulate else 'SIMULATED'}")
         self._scales.tare_all()
 
-        # Start inference
+        # Print hardware summary
+        active_count = sum(1 for v in self.hw_status.values() if v == "active")
+        total = len(self.hw_status)
+        print(f"[SYSTEM] Hardware: {active_count}/{total} components active")
+
+        # Start inference (camera — always attempted)
         self._start_inference()
 
         # Start threads
@@ -450,14 +515,17 @@ class SystemController:
                 s = inference_state.get_state()
                 if s.get("is_running") and s.get("has_frame"):
                     self.camera_connected = True
-                    print("[SYSTEM] Camera feed live")
+                    self.hw_status["camera"] = "active"
+                    print("[HW] Camera (IMX500): OK")
                     return
                 time.sleep(0.2)
 
             print("[WARN] Camera feed timeout")
+            self.hw_status["camera"] = "simulated"
         except ImportError:
             print("[WARN] Inference module not available (not on Pi)")
             self.camera_connected = False
+            self.hw_status["camera"] = "simulated"
 
     def _conveyor_loop(self):
         """Keep conveyor running while system is active."""
@@ -586,6 +654,7 @@ class SystemController:
                 "camera_connected": self.camera_connected,
                 "fps": round(self.fps, 1),
                 "vibration_active": self.vibration_active,
+                "hw_status": dict(self.hw_status),
                 "bins": {
                     bid: state.to_dict()
                     for bid, state in self.bin_states.items()
