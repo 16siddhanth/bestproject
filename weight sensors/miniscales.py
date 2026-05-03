@@ -49,9 +49,18 @@ REG_I2C_ADDR      = 0xFF   # 1 byte
 class MiniScales:
     """Driver for M5Stack MiniScales Unit over I2C."""
 
-    def __init__(self, bus: int = I2C_BUS, addr: int = DEVICE_ADDR):
+    def __init__(self, bus: int = I2C_BUS, addr: int = DEVICE_ADDR, mux_channel: int = None):
         self.addr = addr
         self.bus = smbus2.SMBus(bus)
+        
+        # If a mux channel is specified, configure the PCA9548A to select it
+        if mux_channel is not None:
+            # PCA9548A default address is 0x70
+            try:
+                self.bus.write_byte(0x70, 1 << mux_channel)
+                time.sleep(0.01)
+            except Exception as e:
+                print(f"Warning: Failed to set multiplexer channel: {e}")
 
     def close(self):
         self.bus.close()
@@ -127,10 +136,28 @@ class MiniScales:
 
 # ── Main ──────────────────────────────────────────────────────────
 def main():
-    scale = MiniScales()
+    print("M5Stack MiniScales Test Script")
+    print("------------------------------")
+    print("Scales are connected through the PCA9548A multiplexer.")
+    
+    while True:
+        try:
+            choice = input("Which scale do you want to test? (1, 2, 3, or 4): ").strip()
+            if choice in ['1', '2', '3', '4']:
+                # Convert 1-indexed choice (1-4) to 0-indexed mux channel (0-3)
+                mux_channel = int(choice) - 1
+                break
+            else:
+                print("Invalid choice. Please enter 1, 2, 3, or 4.")
+        except KeyboardInterrupt:
+            print("\nExiting.")
+            return
+
+    print(f"\nInitializing Scale {choice} (Mux Channel SD{mux_channel})...")
+    scale = MiniScales(mux_channel=mux_channel)
     try:
         fw = scale.get_firmware_version()
-        print(f"MiniScales connected  (FW v{fw})")
+        print(f"Scale {choice} connected  (FW v{fw})")
 
         # Green LED to confirm connection
         scale.set_led(0, 16, 0)

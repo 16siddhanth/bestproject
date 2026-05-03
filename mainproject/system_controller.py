@@ -185,26 +185,26 @@ class ServoController:
                 pass
 
 
-# ── M5 MiniScale via TCA9548A (HW-617) ───────────────────────
+# ── M5 MiniScale via PCA9548A (HW-617) ───────────────────────
 
 class MiniScaleArray:
-    """Read 4 M5 MiniScales connected through a TCA9548A I2C multiplexer.
+    """Read 4 M5 MiniScales connected through a PCA9548A I2C multiplexer.
 
     I2C Wiring:
-        Raspberry Pi 5          TCA9548A (HW-617)         M5 MiniScales
+        Raspberry Pi 5          PCA9548A (HW-617)         M5 MiniScales
         ─────────────           ──────────────────         ─────────────
         Pin 3 (SDA) ──────────▶ SDA                       
         Pin 5 (SCL) ──────────▶ SCL                       
-                                SD0 / SC0 ───────────────▶ Scale 0 (Bin 0 — Cattle)  SDA/SCL
-                                SD1 / SC1 ───────────────▶ Scale 1 (Bin 1 — Goats)   SDA/SCL
-                                SD2 / SC2 ───────────────▶ Scale 2 (Bin 2 — Poultry) SDA/SCL
-                                SD3 / SC3 ───────────────▶ Scale 3 (Bin 3 — Pigs)    SDA/SCL
+                                SD0 / SC0 ───────────────▶ Scale 1 (Bin 0 — Cattle)  SDA/SCL
+                                SD1 / SC1 ───────────────▶ Scale 2 (Bin 1 — Goats)   SDA/SCL
+                                SD2 / SC2 ───────────────▶ Scale 3 (Bin 2 — Poultry) SDA/SCL
+                                SD3 / SC3 ───────────────▶ Scale 4 (Bin 3 — Pigs)    SDA/SCL
 
     Addresses:
-        TCA9548A mux  : 0x70 (default, A0-A2 all low)
+        PCA9548A mux  : 0x70 (default, A0-A2 all low)
         M5 MiniScale  : 0x26 (same on each mux channel)
     """
-    TCA_ADDR = 0x70
+    PCA_ADDR = 0x70
     SCALE_ADDR = 0x26
     REG_WEIGHT_FLOAT = 0x10
     REG_OFFSET = 0x50
@@ -222,7 +222,7 @@ class MiniScaleArray:
 
     def _select_channel(self, ch: int):
         if self._bus:
-            self._bus.write_byte(self.TCA_ADDR, 1 << ch)
+            self._bus.write_byte(self.PCA_ADDR, 1 << ch)
             time.sleep(0.01)
 
     def read_weight(self, bin_id: int) -> float:
