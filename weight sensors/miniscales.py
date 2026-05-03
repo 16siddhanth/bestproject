@@ -278,39 +278,47 @@ def _calibrate_all():
         print("\nCancelled.")
         return
 
-    bus = smbus2.SMBus(1)
     found = 0
 
     for ch in range(4):
         name = SCALE_NAMES[ch]
-        # Select multiplexer channel
+        
+        # Test if connected by trying to init
         try:
-            bus.write_byte(0x70, 1 << ch)
-            time.sleep(0.05)
-        except OSError:
-            print(f"  [✗] {name} — multiplexer channel failed")
-            continue
-
-        # Check if a scale is present
-        try:
-            bus.read_i2c_block_data(DEVICE_ADDR, REG_FW_VERSION, 1)
+            scale = MiniScales(mux_channel=ch)
+            scale.get_firmware_version()
         except OSError:
             print(f"  [–] {name} — not connected")
             continue
 
-        # Tare: write 1 to offset register
         try:
-            bus.write_i2c_block_data(DEVICE_ADDR, REG_OFFSET, [1])
-            time.sleep(0.3)
+            # Enable filters for stable reading
+            scale.set_lp_filter(True)
+            scale.set_avg_filter(20)
+            scale.set_ema_filter(10)
+            
+            # Let the filters settle with the empty weight before taring
+            print(f"  [...] {name} — settling filters...")
+            time.sleep(1.5)
+            
+            # Issue the tare command
+            scale.tare()
+            
+            # Let the filters settle on the new zero
+            time.sleep(1.5)
+            
             # Verify it reads ~0
-            data = bytes(bus.read_i2c_block_data(DEVICE_ADDR, REG_WEIGHT_FLOAT, 4))
-            weight = struct.unpack_from("<f", data)[0]
-            print(f"  [✓] {name} — tared  (reads {weight:+.1f} g)")
+            weight = scale.get_weight()
+            print(f"  [✓] {name} — tared (reads {weight:+.1f} g)")
             found += 1
         except OSError as e:
             print(f"  [✗] {name} — tare failed ({e})")
+        finally:
+            try:
+                scale.close()
+            except Exception:
+                pass
 
-    bus.close()
     print(f"\nCalibration complete: {found}/4 scales zeroed.\n")
 
 

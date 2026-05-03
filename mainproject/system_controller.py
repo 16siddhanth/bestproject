@@ -208,6 +208,9 @@ class MiniScaleArray:
     SCALE_ADDR = 0x26
     REG_WEIGHT_FLOAT = 0x10
     REG_OFFSET = 0x50
+    REG_LP_FILTER = 0x80
+    REG_AVG_FILTER = 0x81
+    REG_EMA_FILTER = 0x82
 
     def __init__(self, simulate=False):
         self._simulate = simulate
@@ -223,12 +226,17 @@ class MiniScaleArray:
                 self._simulate = True
 
     def _probe_channels(self):
-        """Check which mux channels have a scale attached."""
+        """Check which mux channels have a scale attached and configure them."""
         for ch in range(4):
             try:
                 self._select_channel(ch)
                 self._bus.read_i2c_block_data(self.SCALE_ADDR, 0xFE, 1)  # REG_FW_VERSION
                 self._connected[ch] = True
+                
+                # Configure filters (LP on, 20 avg, 10 EMA)
+                self._bus.write_i2c_block_data(self.SCALE_ADDR, self.REG_LP_FILTER, [1])
+                self._bus.write_i2c_block_data(self.SCALE_ADDR, self.REG_AVG_FILTER, [20])
+                self._bus.write_i2c_block_data(self.SCALE_ADDR, self.REG_EMA_FILTER, [10])
             except Exception:
                 self._connected[ch] = False
 
@@ -256,8 +264,9 @@ class MiniScaleArray:
             return
         try:
             self._select_channel(bin_id)
+            time.sleep(1.0) # Let the scale settle
             self._bus.write_i2c_block_data(self.SCALE_ADDR, self.REG_OFFSET, [1])
-            time.sleep(0.3)
+            time.sleep(1.5) # Let the new zero stabilize
         except Exception:
             pass
 
