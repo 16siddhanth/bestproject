@@ -747,21 +747,39 @@ class SystemController:
                 detections = state.get("detections", [])
                 if detections:
                     self.status = "detecting"
+                    
+                    # Snapshot last frame BEFORE stopping to force a fresh post-stop frame (prevent blur)
+                    frame_before_stop = self._inference_state.get_frame_jpeg()
+                    if not frame_before_stop:
+                        with self._lock:
+                            frame_before_stop = self.latest_frame_jpeg
+                            
                     # Stop conveyor immediately on camera detection
                     self._belt.motor_stop()
                     print("[DETECT] Object detected by camera — belt stopped")
 
-                    # Wait 1.5 seconds after belt stop for stable frame capture
+                    # Wait for stable frame capture
                     self.status = "classifying"
                     if self._stop_event.wait(POST_STOP_CAPTURE_DELAY):
                         break
 
-                    # Capture frame for AI classification
-                    # Use inference frame if available, otherwise latest_frame_jpeg
-                    capture_frame = self._inference_state.get_frame_jpeg()
+                    # Capture fresh frame for AI classification (must differ from moving frame)
+                    capture_frame = None
+                    for _ in range(20):
+                        cand = self._inference_state.get_frame_jpeg()
+                        if not cand:
+                            with self._lock:
+                                cand = self.latest_frame_jpeg
+                        if cand and cand != frame_before_stop:
+                            capture_frame = cand
+                            break
+                        time.sleep(0.1)
+                        
                     if not capture_frame:
-                        with self._lock:
-                            capture_frame = self.latest_frame_jpeg
+                        capture_frame = self._inference_state.get_frame_jpeg()
+                        if not capture_frame:
+                            with self._lock:
+                                capture_frame = self.latest_frame_jpeg
 
                     if capture_frame:
                         peels = classify_frame(capture_frame, self._ai_model)
@@ -777,7 +795,7 @@ class SystemController:
                     # Wait for object to clear the belt before next detection
                     self._stop_event.wait(2.0)
                 else:
-                    self._stop_event.wait(0.15)
+                    self._stop_event.wait(0.033)
             except Exception as e:
                 print(f"[DETECT] Error: {e}")
                 self._stop_event.wait(1.0)

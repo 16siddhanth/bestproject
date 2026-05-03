@@ -1112,19 +1112,11 @@ def main() -> None:
                 last_ir_detection_time = now
                 if not object_locked:
                     object_locked = True
-                    scheduled_stop_time = now + max(0.0, args.ir_stop_delay)
-                    print(
-                        "[EVENT] Object detected by YOLO model. "
-                        f"Motor will pause in {args.ir_stop_delay:.1f}s..."
-                    )
+                    print("[EVENT] Object detected by YOLO model. Pausing motor immediately for classification...")
 
-            if object_locked and scheduled_stop_time is not None and now >= scheduled_stop_time:
-                scheduled_stop_time = None
-                print("[EVENT] IR stop delay elapsed. Pausing motor for classification...")
-
-                # Snapshot last frame BEFORE stopping so we can force a fresh post-stop frame.
-                frame_before_stop = inference_state.get_frame_jpeg()
-                cycler.pause()
+                    # Snapshot last frame BEFORE stopping so we can force a fresh post-stop frame.
+                    frame_before_stop = inference_state.get_frame_jpeg()
+                    cycler.pause()
 
                 if args.post_stop_capture_delay > 0:
                     print(
