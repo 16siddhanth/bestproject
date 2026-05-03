@@ -474,7 +474,7 @@ class SystemController:
             )
             self._inference_state = inference_state
 
-            model_path = str(RASPI_DIR / "models" / "coco_pretrained" / "imx500_network_yolo11n_pp.rpk")
+            model_path = "/home/project1/final/bestproject/raspi_system/models/coco_pretrained/imx500_network_yolo11n_pp.rpk"
             labels = load_labels(None, "detect", True)
 
             inference_failed = threading.Event()

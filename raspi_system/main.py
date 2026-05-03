@@ -186,8 +186,7 @@ class VeggieFeedSystem:
 def main():
     parser = argparse.ArgumentParser(description="VeggieFeed Sorting System")
     parser.add_argument("--model", type=str,
-                       default=os.path.join(BASE_DIR, "models", "coco_pretrained",
-                                           "imx500_network_yolo11n_pp.rpk"),
+                       default="/home/project1/final/bestproject/raspi_system/models/coco_pretrained/imx500_network_yolo11n_pp.rpk",
                        help="Path to model (.rpk for IMX500, .pt for software)")
     parser.add_argument("--task", type=str, default="detect",
                        choices=["classify", "detect", "software"],

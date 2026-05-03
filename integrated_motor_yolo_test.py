@@ -475,7 +475,7 @@ class MotorCycler:
 
 
 def parse_args() -> argparse.Namespace:
-    default_model = BASE_DIR / "raspi_system" / "models" / "coco_pretrained" / "imx500_network_yolo11n_pp.rpk"
+    default_model = "/home/project1/final/bestproject/raspi_system/models/coco_pretrained/imx500_network_yolo11n_pp.rpk"
 
     parser = argparse.ArgumentParser(description="Motor + YOLO + enhanced classification integration test")
     parser.add_argument("--model", type=str, default=str(default_model), help="Path to .rpk or .pt model")
