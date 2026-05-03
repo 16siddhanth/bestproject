@@ -483,7 +483,7 @@ class SystemController:
                 try:
                     run_detection_inference(
                         model_path=model_path, labels=labels,
-                        threshold=0.30, headless=True, use_coco_mapping=True,
+                        threshold=0.30, headless=True, use_coco_mapping=False,
                     )
                 except Exception as e:
                     print(f"[WARN] Inference error: {e}")
