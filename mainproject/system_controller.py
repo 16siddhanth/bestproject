@@ -530,14 +530,30 @@ class SystemController:
 
     def _start_picamera_fallback(self):
         """Start a basic picamera2 MJPEG feed without YOLO."""
+        print("[CAM] Attempting picamera2 fallback...")
         try:
-            Picamera2 = importlib.import_module("picamera2").Picamera2
+            picamera2_mod = importlib.import_module("picamera2")
+            Picamera2 = picamera2_mod.Picamera2
+            print("[CAM] picamera2 module loaded")
+        except ImportError as e:
+            print(f"[HW] Camera: NOT AVAILABLE (picamera2 not installed: {e})")
+            self.camera_connected = False
+            self.hw_status["camera"] = "simulated"
+            return
+
+        try:
             cam = Picamera2()
             config = cam.create_preview_configuration(
                 main={"size": (640, 480), "format": "RGB888"}
             )
             cam.configure(config)
             cam.start()
+            print("[CAM] picamera2 started, testing capture...")
+
+            # Test capture a single frame to verify the pipeline
+            test_arr = cam.capture_array()
+            print(f"[CAM] Test frame captured: shape={test_arr.shape}, dtype={test_arr.dtype}")
+
             self._picam = cam
             self.camera_connected = True
             self.camera_mode = "picamera"
@@ -547,6 +563,7 @@ class SystemController:
             threading.Thread(target=self._picamera_frame_loop, daemon=True, name="picam-frames").start()
         except Exception as e:
             print(f"[HW] Camera: NOT AVAILABLE ({e})")
+            import traceback; traceback.print_exc()
             self.camera_connected = False
             self.hw_status["camera"] = "simulated"
 
@@ -567,36 +584,43 @@ class SystemController:
 
     def _picamera_frame_loop(self):
         """Continuously grab frames from raw picamera2."""
+        # Try to load an encoder for JPEG
         cv2 = None
+        PIL_Image = None
         try:
             cv2 = importlib.import_module("cv2")
+            print("[CAM] Using OpenCV for JPEG encoding")
         except ImportError:
-            pass
+            try:
+                PIL_Image = importlib.import_module("PIL").Image
+                print("[CAM] Using PIL for JPEG encoding")
+            except ImportError:
+                print("[CAM] WARNING: Neither OpenCV nor PIL available — no JPEG encoding!")
+                return
 
         frame_count = 0
         fps_start = time.monotonic()
+        first_frame = True
 
         while not self._camera_stop.is_set() and self._picam:
             try:
                 arr = self._picam.capture_array()
                 if cv2 is not None:
-                    # Convert RGB→BGR for cv2, then encode to JPEG
                     bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
                     _, jpeg = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
                     with self._lock:
                         self.latest_frame_jpeg = jpeg.tobytes()
-                else:
-                    # Minimal fallback: try PIL
-                    try:
-                        from io import BytesIO
-                        PIL_Image = importlib.import_module("PIL.Image").Image
-                        img = PIL_Image.fromarray(arr)
-                        buf = BytesIO()
-                        img.save(buf, format="JPEG", quality=80)
-                        with self._lock:
-                            self.latest_frame_jpeg = buf.getvalue()
-                    except Exception:
-                        pass
+                elif PIL_Image is not None:
+                    from io import BytesIO
+                    img = PIL_Image.fromarray(arr)
+                    buf = BytesIO()
+                    img.save(buf, format="JPEG", quality=80)
+                    with self._lock:
+                        self.latest_frame_jpeg = buf.getvalue()
+
+                if first_frame:
+                    print(f"[CAM] First frame encoded ({len(self.latest_frame_jpeg)} bytes)")
+                    first_frame = False
 
                 frame_count += 1
                 elapsed = time.monotonic() - fps_start
@@ -604,8 +628,9 @@ class SystemController:
                     self.fps = frame_count / elapsed
                     frame_count = 0
                     fps_start = time.monotonic()
-            except Exception:
-                pass
+            except Exception as e:
+                if first_frame:
+                    print(f"[CAM] Frame capture error: {e}")
             self._camera_stop.wait(0.033)  # ~30 fps target
 
     def _conveyor_loop(self):
