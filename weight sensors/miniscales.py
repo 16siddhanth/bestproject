@@ -37,14 +37,16 @@ import smbus2
 # ── I2C address & bus ──────────────────────────────────────────────
 I2C_BUS = 1
 DEVICE_ADDR = 0x26
+MUX_ADDR = 0x70
 
-# ── Register map (from M5Stack UNIT_SCALES driver) ────────────────
+# ── Official register map (from M5Stack UNIT_SCALES.h) ────────────
+# https://github.com/m5stack/M5Unit-Miniscale/blob/main/src/UNIT_SCALES.h
 REG_RAW_ADC       = 0x00   # 4 bytes  int32   LE
 REG_WEIGHT_FLOAT  = 0x10   # 4 bytes  float   LE  (calibrated)
-REG_BUTTON        = 0x20   # 1 byte   uint8
+REG_BUTTON        = 0x20   # 1 byte   uint8   (read-only: 1 = pressed)
 REG_RGB_LED       = 0x30   # 3 bytes  R G B
 REG_GAP           = 0x40   # 4 bytes  float   LE  (scale factor)
-REG_OFFSET        = 0x50   # 1 byte   write 1 to tare
+REG_OFFSET        = 0x50   # 1 byte   write 1 to tare (same as pressing button)
 REG_WEIGHT_INT    = 0x60   # 4 bytes  int32   LE  (calibrated, int)
 REG_WEIGHT_STR    = 0x70   # 16 bytes string
 REG_LP_FILTER     = 0x80   # 1 byte   0/1
@@ -60,12 +62,11 @@ class MiniScales:
     def __init__(self, bus: int = I2C_BUS, addr: int = DEVICE_ADDR, mux_channel: int = None):
         self.addr = addr
         self.bus = smbus2.SMBus(bus)
-        
+
         # If a mux channel is specified, configure the PCA9548A to select it
         if mux_channel is not None:
-            # PCA9548A default address is 0x70
             try:
-                self.bus.write_byte(0x70, 1 << mux_channel)
+                self.bus.write_byte(MUX_ADDR, 1 << mux_channel)
                 time.sleep(0.05)  # Wait for multiplexer and scale to settle
             except Exception as e:
                 print(f"Warning: Failed to set multiplexer channel: {e}")
@@ -99,12 +100,14 @@ class MiniScales:
         return raw.split(b"\x00", 1)[0].decode("ascii", errors="replace")
 
     def get_button(self) -> bool:
-        """True if the onboard button is pressed."""
+        """True if the onboard button is physically pressed."""
         return bool(self._read(REG_BUTTON, 1)[0])
 
     # ── tare / calibration ─────────────────────────────────────────
     def tare(self):
-        """Zero the scale (set current load as offset)."""
+        """Zero the scale — identical to pressing the physical button.
+        Writes 0x01 to register 0x50 (UNIT_SCALES_SET_OFFSET_REG).
+        """
         self._write(REG_OFFSET, b"\x01")
         time.sleep(0.2)
 
@@ -142,16 +145,24 @@ class MiniScales:
         return self._read(REG_FW_VERSION, 1)[0]
 
 
-# ── Main ──────────────────────────────────────────────────────────
+# ── Scale / channel names ─────────────────────────────────────────
+SCALE_NAMES = {
+    0: "Scale 1 (SD0)",
+    1: "Scale 2 (SD1)",
+    2: "Scale 3 (SD2)",
+    3: "Scale 4 (SD3)",
+}
 
-SCALE_NAMES = {0: "Scale 1 (SD0)", 1: "Scale 2 (SD1)", 2: "Scale 3 (SD2)", 3: "Scale 4 (SD3)"}
 
+# ══════════════════════════════════════════════════════════════════
+#  Option 1 — Test a Single Scale
+# ══════════════════════════════════════════════════════════════════
 
-def _test_scale():
-    """Test a single scale: pick one, tare it, and stream live weight."""
+def _test_single():
+    """Pick one scale, tare it, and stream live weight."""
     while True:
         try:
-            choice = input("Which scale do you want to test? (1, 2, 3, or 4): ").strip()
+            choice = input("Which scale? (1, 2, 3, or 4): ").strip()
             if choice in ['1', '2', '3', '4']:
                 mux_channel = int(choice) - 1
                 break
@@ -161,30 +172,27 @@ def _test_scale():
             print("\nExiting.")
             return
 
-    print(f"\nInitializing Scale {choice} (Mux Channel SD{mux_channel})...")
+    print(f"\nInitializing {SCALE_NAMES[mux_channel]}...")
     scale = MiniScales(mux_channel=mux_channel)
     try:
         try:
             fw = scale.get_firmware_version()
         except OSError:
-            print(f"\n[ERROR] Scale {choice} not found on multiplexer channel SD{mux_channel}.")
-            print("Please check your wiring: ensure the scale is plugged into the correct port")
-            print("on the PCA9548A multiplexer and that the Pi's I2C pins are connected.")
+            print(f"\n[ERROR] {SCALE_NAMES[mux_channel]} not found.")
+            print("Check wiring: scale → PCA9548A port → Pi I2C pins.")
             return
 
-        print(f"Scale {choice} connected  (FW v{fw})")
+        print(f"Connected (FW v{fw})")
+        scale.set_led(0, 16, 0)  # Green LED
 
-        # Green LED to confirm connection
-        scale.set_led(0, 16, 0)
-
-        # Enable onboard filters for stable readings
+        # Enable filters
         scale.set_lp_filter(True)
         scale.set_avg_filter(20)
         scale.set_ema_filter(10)
         time.sleep(0.3)
 
-        # Tare on startup — let readings settle first
-        print("Taring — keep the scale empty ...")
+        # Tare on startup
+        print("Taring — keep the scale empty...")
         time.sleep(1)
         scale.tare()
         time.sleep(1)
@@ -213,63 +221,87 @@ def _test_scale():
         scale.close()
 
 
-def _test_all_scales():
-    """Rapidly cycle through all 4 channels and print live weights side-by-side."""
+# ══════════════════════════════════════════════════════════════════
+#  Option 2 — Test All Scales Simultaneously
+# ══════════════════════════════════════════════════════════════════
+
+def _test_all():
+    """Rapidly cycle all 4 channels and print live weights side-by-side."""
     print("\n╔══════════════════════════════════════╗")
     print("║     Testing All MiniScales Live      ║")
     print("╚══════════════════════════════════════╝")
     print("Press Ctrl-C to quit.\n")
 
     bus = smbus2.SMBus(1)
-    
+
     # Pre-check which ones are connected
     connected = {}
     for ch in range(4):
         try:
-            bus.write_byte(0x70, 1 << ch)
+            bus.write_byte(MUX_ADDR, 1 << ch)
             time.sleep(0.05)
             bus.read_i2c_block_data(DEVICE_ADDR, REG_FW_VERSION, 1)
             connected[ch] = True
+
+            # Enable filters on each connected scale
+            bus.write_i2c_block_data(DEVICE_ADDR, REG_LP_FILTER, [1])
+            bus.write_i2c_block_data(DEVICE_ADDR, REG_AVG_FILTER, [20])
+            bus.write_i2c_block_data(DEVICE_ADDR, REG_EMA_FILTER, [10])
         except OSError:
             connected[ch] = False
 
+    conn_list = [f"S{ch+1}" for ch, ok in connected.items() if ok]
+    miss_list = [f"S{ch+1}" for ch, ok in connected.items() if not ok]
+    print(f"  Connected: {', '.join(conn_list) if conn_list else 'none'}")
+    if miss_list:
+        print(f"  Missing:   {', '.join(miss_list)}")
+
     if not any(connected.values()):
-        print("[ERROR] No scales detected on any multiplexer channel!")
+        print("\n[ERROR] No scales detected on any multiplexer channel!")
         bus.close()
         return
 
+    print()
     try:
         while True:
-            output_parts = []
+            parts = []
             for ch in range(4):
                 if not connected[ch]:
-                    output_parts.append(f"S{ch+1}: ---")
+                    parts.append(f"S{ch+1}:  ---  ")
                     continue
-                
                 try:
-                    bus.write_byte(0x70, 1 << ch)
-                    # Use a very tiny sleep when cycling rapidly
+                    bus.write_byte(MUX_ADDR, 1 << ch)
                     time.sleep(0.02)
                     data = bytes(bus.read_i2c_block_data(DEVICE_ADDR, REG_WEIGHT_FLOAT, 4))
                     weight = struct.unpack_from("<f", data)[0]
-                    output_parts.append(f"S{ch+1}: {weight:>6.1f}g")
+                    parts.append(f"S{ch+1}: {weight:>6.1f}g")
                 except OSError:
-                    output_parts.append(f"S{ch+1}: ERR")
+                    parts.append(f"S{ch+1}:  ERR  ")
 
-            print("\r" + "  |  ".join(output_parts) + "   ", end="", flush=True)
-            time.sleep(0.2)  # Update 5 times a second
-            
+            print("\r" + "  |  ".join(parts) + "   ", end="", flush=True)
+            time.sleep(0.2)
+
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
         bus.close()
 
 
-def _calibrate_all():
-    """Scan all 4 mux channels, tare every connected scale to 0 g."""
+# ══════════════════════════════════════════════════════════════════
+#  Option 3 — Calibrate (Tare All Scales)
+# ══════════════════════════════════════════════════════════════════
+
+def _calibrate():
+    """Tare all connected scales to 0 g.
+
+    This is identical to physically pressing the button on each
+    MiniScale — it writes 0x01 to register 0x50 (SET_OFFSET_REG)
+    on the STM32 firmware, which resets the zero point.
+    """
     print("\n╔══════════════════════════════════════╗")
-    print("║     Calibrating All MiniScales       ║")
+    print("║     Calibrate — Tare All Scales      ║")
     print("╚══════════════════════════════════════╝")
+    print("This does the same thing as pressing the button on each scale.")
     print("Make sure ALL scales are EMPTY before proceeding.\n")
 
     try:
@@ -278,149 +310,84 @@ def _calibrate_all():
         print("\nCancelled.")
         return
 
+    bus = smbus2.SMBus(1)
     found = 0
 
     for ch in range(4):
         name = SCALE_NAMES[ch]
-        
-        # Test if connected by trying to init
+
+        # Select mux channel
         try:
-            scale = MiniScales(mux_channel=ch)
-            scale.get_firmware_version()
+            bus.write_byte(MUX_ADDR, 1 << ch)
+            time.sleep(0.05)
+        except OSError:
+            print(f"  [✗] {name} — mux channel failed")
+            continue
+
+        # Check if scale is present
+        try:
+            bus.read_i2c_block_data(DEVICE_ADDR, REG_FW_VERSION, 1)
         except OSError:
             print(f"  [–] {name} — not connected")
             continue
 
+        # Enable filters first so readings stabilize
         try:
-            # Enable filters for stable reading
-            scale.set_lp_filter(True)
-            scale.set_avg_filter(20)
-            scale.set_ema_filter(10)
-            
-            # Let the filters settle with the empty weight before taring
-            print(f"  [...] {name} — settling filters...")
-            time.sleep(1.5)
-            
-            # Issue the tare command
-            scale.tare()
-            
-            # Let the filters settle on the new zero
-            time.sleep(1.5)
-            
-            # Verify it reads ~0
-            weight = scale.get_weight()
-            print(f"  [✓] {name} — tared (reads {weight:+.1f} g)")
+            bus.write_i2c_block_data(DEVICE_ADDR, REG_LP_FILTER, [1])
+            bus.write_i2c_block_data(DEVICE_ADDR, REG_AVG_FILTER, [20])
+            bus.write_i2c_block_data(DEVICE_ADDR, REG_EMA_FILTER, [10])
+        except OSError:
+            pass
+
+        # Let the filters settle
+        print(f"  [...] {name} — settling...", end="", flush=True)
+        time.sleep(1.5)
+
+        # Tare: write 0x01 to REG_OFFSET (same as pressing button)
+        try:
+            bus.write_i2c_block_data(DEVICE_ADDR, REG_OFFSET, [1])
+            time.sleep(1.5)  # Let the new zero stabilize
+
+            # Re-select channel (in case mux drifted) and verify
+            bus.write_byte(MUX_ADDR, 1 << ch)
+            time.sleep(0.05)
+            data = bytes(bus.read_i2c_block_data(DEVICE_ADDR, REG_WEIGHT_FLOAT, 4))
+            weight = struct.unpack_from("<f", data)[0]
+            print(f"\r  [✓] {name} — tared (reads {weight:+.1f} g)")
             found += 1
         except OSError as e:
-            print(f"  [✗] {name} — tare failed ({e})")
-        finally:
-            try:
-                scale.close()
-            except Exception:
-                pass
+            print(f"\r  [✗] {name} — tare failed ({e})")
 
+    bus.close()
     print(f"\nCalibration complete: {found}/4 scales zeroed.\n")
 
 
-def _calibrate_gap_for_scale():
-    """Calibrate the GAP (scale factor) for a specific scale using a known weight.
-    This fixes wild weight readings caused by corrupted memory in the scale."""
-    print("\n╔══════════════════════════════════════╗")
-    print("║   Calibrate GAP (Fix Wild Weights)   ║")
-    print("╚══════════════════════════════════════╝")
-    
-    choice = input("Which scale has wild weights? (1, 2, 3, or 4): ").strip()
-    if choice not in ['1', '2', '3', '4']:
-        print("Invalid choice.")
-        return
-        
-    mux_channel = int(choice) - 1
-    scale = MiniScales(mux_channel=mux_channel)
-    
-    try:
-        scale.get_firmware_version()
-    except OSError:
-        print(f"[ERROR] Scale {choice} not connected on channel SD{mux_channel}.")
-        return
-
-    try:
-        scale.set_lp_filter(True)
-        scale.set_avg_filter(20)
-        scale.set_ema_filter(10)
-        
-        print("\nStep 1: Empty the scale.")
-        input("Press Enter when the scale is completely EMPTY... ")
-        print("Reading baseline...")
-        time.sleep(1)
-        raw_empty = scale.get_raw_adc()
-        print(f"Empty RAW value: {raw_empty}")
-        
-        # Tare it just so it's zeroed for future
-        scale.tare()
-        
-        print("\nStep 2: Place a KNOWN WEIGHT on the scale.")
-        weight_str = input("How heavy is the weight in grams? (e.g. 100): ").strip()
-        try:
-            known_weight = float(weight_str)
-        except ValueError:
-            print("Invalid weight. Must be a number.")
-            return
-            
-        input(f"Place the {known_weight}g weight on the scale and press Enter... ")
-        print("Reading weight...")
-        time.sleep(2)  # Let it settle
-        raw_weight = scale.get_raw_adc()
-        print(f"Weighted RAW value: {raw_weight}")
-        
-        if raw_weight == raw_empty:
-            print("[ERROR] The RAW value didn't change! The load cell might be broken or disconnected inside.")
-            return
-            
-        # GAP calculation: ADC_Delta / Weight_Delta
-        # E.g., if 100g changes RAW by 10,000, GAP is 100.
-        new_gap = (raw_weight - raw_empty) / known_weight
-        
-        print(f"\nCalculated new GAP (Scale Factor): {new_gap:.4f}")
-        print("Saving to scale memory...")
-        scale.set_gap(new_gap)
-        time.sleep(0.5)
-        
-        test_weight = scale.get_weight()
-        print(f"Verification reading: {test_weight:.1f} g")
-        print("GAP calibration complete!")
-        
-    except Exception as e:
-        print(f"[ERROR] Calibration failed: {e}")
-    finally:
-        scale.close()
-
+# ══════════════════════════════════════════════════════════════════
+#  Main Menu
+# ══════════════════════════════════════════════════════════════════
 
 def main():
     print("M5Stack MiniScales — PCA9548A Multiplexer")
     print("==========================================\n")
     print("  1) Test a single scale")
-    print("  2) Calibrate all scales (tare to 0 g)")
-    print("  3) Test all scales simultaneously")
-    print("  4) Calibrate Scale Factor (Fix wild weights)")
+    print("  2) Test all scales simultaneously")
+    print("  3) Calibrate (tare all to 0 g)")
     print()
 
     while True:
         try:
-            choice = input("Select mode (1, 2, 3, or 4): ").strip()
+            choice = input("Select mode (1, 2, or 3): ").strip()
             if choice == '1':
-                _test_scale()
+                _test_single()
                 return
             elif choice == '2':
-                _calibrate_all()
+                _test_all()
                 return
             elif choice == '3':
-                _test_all_scales()
-                return
-            elif choice == '4':
-                _calibrate_gap_for_scale()
+                _calibrate()
                 return
             else:
-                print("Invalid choice. Please enter 1, 2, 3, or 4.")
+                print("Invalid choice. Please enter 1, 2, or 3.")
         except KeyboardInterrupt:
             print("\nExiting.")
             return
@@ -428,4 +395,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
