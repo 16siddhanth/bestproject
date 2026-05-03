@@ -213,21 +213,35 @@ class MiniScaleArray:
         self._simulate = simulate
         self._bus = None
         self._sim_weights = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0}
+        self._connected = {0: False, 1: False, 2: False, 3: False}
         if not simulate:
             try:
                 smbus2 = importlib.import_module("smbus2")
                 self._bus = smbus2.SMBus(1)
+                self._probe_channels()
             except Exception:
                 self._simulate = True
+
+    def _probe_channels(self):
+        """Check which mux channels have a scale attached."""
+        for ch in range(4):
+            try:
+                self._select_channel(ch)
+                self._bus.read_i2c_block_data(self.SCALE_ADDR, 0xFE, 1)  # REG_FW_VERSION
+                self._connected[ch] = True
+            except Exception:
+                self._connected[ch] = False
 
     def _select_channel(self, ch: int):
         if self._bus:
             self._bus.write_byte(self.PCA_ADDR, 1 << ch)
-            time.sleep(0.01)
+            time.sleep(0.05)
 
     def read_weight(self, bin_id: int) -> float:
         if self._simulate:
             return self._sim_weights.get(bin_id, 0.0)
+        if not self._connected.get(bin_id, False):
+            return 0.0
         try:
             self._select_channel(bin_id)
             data = bytes(self._bus.read_i2c_block_data(self.SCALE_ADDR, self.REG_WEIGHT_FLOAT, 4))
@@ -238,15 +252,21 @@ class MiniScaleArray:
     def tare(self, bin_id: int):
         if self._simulate:
             self._sim_weights[bin_id] = 0.0; return
+        if not self._connected.get(bin_id, False):
+            return
         try:
             self._select_channel(bin_id)
             self._bus.write_i2c_block_data(self.SCALE_ADDR, self.REG_OFFSET, [1])
-            time.sleep(0.2)
+            time.sleep(0.3)
         except Exception:
             pass
 
     def tare_all(self):
         for i in range(4): self.tare(i)
+
+    @property
+    def connected_count(self) -> int:
+        return sum(1 for v in self._connected.values() if v)
 
     def close(self):
         if self._bus:
@@ -434,7 +454,10 @@ class SystemController:
         # Scales (TCA9548A + 4× M5 MiniScale)
         self._scales = MiniScaleArray(simulate=self.simulate)
         self.hw_status["scales"] = "active" if not self._scales._simulate else "simulated"
-        print(f"[HW] Scales (TCA9548A): {'OK' if not self._scales._simulate else 'SIMULATED'}")
+        if not self._scales._simulate:
+            print(f"[HW] Scales (PCA9548A): {self._scales.connected_count}/4 connected")
+        else:
+            print("[HW] Scales (PCA9548A): SIMULATED")
         self._scales.tare_all()
 
         # Print hardware summary

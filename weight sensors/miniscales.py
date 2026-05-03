@@ -135,16 +135,16 @@ class MiniScales:
 
 
 # ── Main ──────────────────────────────────────────────────────────
-def main():
-    print("M5Stack MiniScales Test Script")
-    print("------------------------------")
-    print("Scales are connected through the PCA9548A multiplexer.")
-    
+
+SCALE_NAMES = {0: "Scale 1 (SD0)", 1: "Scale 2 (SD1)", 2: "Scale 3 (SD2)", 3: "Scale 4 (SD3)"}
+
+
+def _test_scale():
+    """Test a single scale: pick one, tare it, and stream live weight."""
     while True:
         try:
             choice = input("Which scale do you want to test? (1, 2, 3, or 4): ").strip()
             if choice in ['1', '2', '3', '4']:
-                # Convert 1-indexed choice (1-4) to 0-indexed mux channel (0-3)
                 mux_channel = int(choice) - 1
                 break
             else:
@@ -158,7 +158,7 @@ def main():
     try:
         try:
             fw = scale.get_firmware_version()
-        except OSError as e:
+        except OSError:
             print(f"\n[ERROR] Scale {choice} not found on multiplexer channel SD{mux_channel}.")
             print("Please check your wiring: ensure the scale is plugged into the correct port")
             print("on the PCA9548A multiplexer and that the Pi's I2C pins are connected.")
@@ -187,7 +187,6 @@ def main():
             raw = scale.get_raw_adc()
             btn = scale.get_button()
 
-            # Update in-place on the same line
             print(
                 f"\rWeight: {weight:>8.1f} g   "
                 f"Raw: {raw:>10d}   "
@@ -202,9 +201,82 @@ def main():
         try:
             scale.set_led(0, 0, 0)
         except OSError:
-            pass  # Ignore if scale wasn't reachable
+            pass
         scale.close()
+
+
+def _calibrate_all():
+    """Scan all 4 mux channels, tare every connected scale to 0 g."""
+    print("\n╔══════════════════════════════════════╗")
+    print("║     Calibrating All MiniScales       ║")
+    print("╚══════════════════════════════════════╝")
+    print("Make sure ALL scales are EMPTY before proceeding.\n")
+
+    try:
+        input("Press Enter when ready (or Ctrl-C to cancel)... ")
+    except KeyboardInterrupt:
+        print("\nCancelled.")
+        return
+
+    bus = smbus2.SMBus(1)
+    found = 0
+
+    for ch in range(4):
+        name = SCALE_NAMES[ch]
+        # Select multiplexer channel
+        try:
+            bus.write_byte(0x70, 1 << ch)
+            time.sleep(0.05)
+        except OSError:
+            print(f"  [✗] {name} — multiplexer channel failed")
+            continue
+
+        # Check if a scale is present
+        try:
+            bus.read_i2c_block_data(DEVICE_ADDR, REG_FW_VERSION, 1)
+        except OSError:
+            print(f"  [–] {name} — not connected")
+            continue
+
+        # Tare: write 1 to offset register
+        try:
+            bus.write_i2c_block_data(DEVICE_ADDR, REG_OFFSET, [1])
+            time.sleep(0.3)
+            # Verify it reads ~0
+            data = bytes(bus.read_i2c_block_data(DEVICE_ADDR, REG_WEIGHT_FLOAT, 4))
+            weight = struct.unpack_from("<f", data)[0]
+            print(f"  [✓] {name} — tared  (reads {weight:+.1f} g)")
+            found += 1
+        except OSError as e:
+            print(f"  [✗] {name} — tare failed ({e})")
+
+    bus.close()
+    print(f"\nCalibration complete: {found}/4 scales zeroed.\n")
+
+
+def main():
+    print("M5Stack MiniScales — PCA9548A Multiplexer")
+    print("==========================================\n")
+    print("  1) Test a single scale")
+    print("  2) Calibrate all scales (tare to 0 g)")
+    print()
+
+    while True:
+        try:
+            choice = input("Select mode (1 or 2): ").strip()
+            if choice == '1':
+                _test_scale()
+                return
+            elif choice == '2':
+                _calibrate_all()
+                return
+            else:
+                print("Invalid choice. Please enter 1 or 2.")
+        except KeyboardInterrupt:
+            print("\nExiting.")
+            return
 
 
 if __name__ == "__main__":
     main()
+
