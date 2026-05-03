@@ -9,7 +9,7 @@ Wiring (PCA9548A HW-617 Multiplexer):
     ─────────────               ──────────────────         ─────────────
     Pin 3 (SDA) ──────────────▶ SDA
     Pin 5 (SCL) ──────────────▶ SCL
-    Pin 2/4 (5V) ─────────────▶ VCC
+    Pin 1/17 (3.3V) ──────────▶ VCC
     Pin 6 (GND) ──────────────▶ GND
                                 SD0 / SC0 ───────────────▶ Scale 1 SDA/SCL
                                 SD1 / SC1 ───────────────▶ Scale 2 SDA/SCL

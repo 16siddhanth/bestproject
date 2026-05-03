@@ -222,9 +222,6 @@ export default function VeggieFeedApp() {
                             ? "Connecting to camera…"
                             : "Waiting for backend…"}
                         </p>
-                        <p className="text-white/20 text-xs mt-1">
-                          YOLO11n · IMX500 AI Camera
-                        </p>
                       </div>
                     </div>
                   )}

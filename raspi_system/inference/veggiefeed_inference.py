@@ -474,13 +474,6 @@ def run_detection_inference(model_path: str, labels: List[str],
 
                     # Bounding box — (x,y) top-left to (x+w, y+h) bottom-right
                     cv2.rectangle(frame, (x, y), (x + w, y + h), color, box_thickness)
-
-                    # Label background + text
-                    text = f"{label}: {conf:.0%}"
-                    (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
-                    cv2.rectangle(frame, (x, max(y - th - 10, 0)), (x + tw + 6, y), color, -1)
-                    cv2.putText(frame, text, (x + 3, max(y - 5, th + 5)),
-                               cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), font_thickness)
             else:
                 # Show "no detection" overlay so user knows the stream is alive
                 overlay_text = "VeggieFeed | No peel detected"
