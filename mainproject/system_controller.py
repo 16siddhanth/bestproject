@@ -47,8 +47,8 @@ from nutrient_data import (
 # ── Constants ─────────────────────────────────────────────────
 
 PWM_FREQ_HZ = 1000
-CONVEYOR_DUTY_CYCLE = 46.0
-VIBRATION_DUTY_CYCLE = 58.0
+CONVEYOR_DUTY_CYCLE = 50.0
+VIBRATION_DUTY_CYCLE = 52.0
 VIBRATION_ON_SECONDS = 5.0
 VIBRATION_CYCLE_SECONDS = 12.0
 POST_STOP_CAPTURE_DELAY = 2.0  # seconds to wait after belt stops before capturing frame

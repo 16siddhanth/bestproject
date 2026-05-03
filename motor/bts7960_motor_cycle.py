@@ -96,7 +96,7 @@ class _RPiGPIODualMotorBackend:
         for pin in self._enable_pins:
             GPIO.output(pin, GPIO.HIGH)
 
-    def motor_forward(self, m1_duty: float = 46.0, m2_duty: float = 58.0) -> None:
+    def motor_forward(self, m1_duty: float = 50.0, m2_duty: float = 52.0) -> None:
         m1 = max(0.0, min(100.0, m1_duty))
         m2 = max(0.0, min(100.0, m2_duty))
         self._m1_lpwm.ChangeDutyCycle(0)
@@ -159,7 +159,7 @@ class _LGPIODualMotorBackend:
         duty = max(0.0, min(100.0, duty_cycle))
         self._lgpio.tx_pwm(self._chip, pin, PWM_FREQ_HZ, duty)
 
-    def motor_forward(self, m1_duty: float = 46.0, m2_duty: float = 58.0) -> None:
+    def motor_forward(self, m1_duty: float = 50.0, m2_duty: float = 52.0) -> None:
         self._set_pwm(Pins.M1_LPWM, 0)
         self._set_pwm(Pins.M2_LPWM, 0)
         self._set_pwm(Pins.M1_RPWM, m1_duty)
@@ -206,7 +206,7 @@ class BTS7960MotorController:
             f"Details: {details}"
         )
 
-    def motor_forward(self, m1_duty: float = 46.0, m2_duty: float = 58.0) -> None:
+    def motor_forward(self, m1_duty: float = 50.0, m2_duty: float = 52.0) -> None:
         self._backend.motor_forward(m1_duty, m2_duty)
 
     def motor_stop(self) -> None:
@@ -252,13 +252,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--speed-belt",
         type=float,
-        default=46.0,
+        default=50.0,
         help="Belt motor (M1) duty cycle percent (0-100)",
     )
     parser.add_argument(
         "--speed-vibration",
         type=float,
-        default=58.0,
+        default=52.0,
         help="Vibration motor (M2) duty cycle percent (0-100)",
     )
     return parser.parse_args()
