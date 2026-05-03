@@ -37,7 +37,7 @@ import smbus2
 # ── I2C address & bus ──────────────────────────────────────────────
 I2C_BUS = 1
 DEVICE_ADDR = 0x26
-MUX_ADDR = 0x70
+MUX_ADDR = 0x71
 
 # ── Official register map (from M5Stack UNIT_SCALES.h) ────────────
 # https://github.com/m5stack/M5Unit-Miniscale/blob/main/src/UNIT_SCALES.h
@@ -374,15 +374,6 @@ def _calibrate():
 # ══════════════════════════════════════════════════════════════════
 
 def main():
-    # Software Fix: Disable PCA9685 All-Call address (0x70) to prevent conflict with PCA9548A mux
-    try:
-        import smbus2
-        with smbus2.SMBus(1) as bus:
-            mode1 = bus.read_byte_data(0x40, 0x00)
-            bus.write_byte_data(0x40, 0x00, (mode1 & ~0x01) | 0x20)
-    except Exception:
-        pass
-
     print("M5Stack MiniScales — PCA9548A Multiplexer")
     print("==========================================\n")
     print("  1) Test a single scale")

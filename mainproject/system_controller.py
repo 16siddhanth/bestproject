@@ -165,18 +165,6 @@ class ServoController:
             i2c = busio.I2C(board.SCL, board.SDA)
             self._pca = pca_mod.PCA9685(i2c, address=0x40)
             self._pca.frequency = 50
-            
-            # Software Fix: The PCA9685 listens to 0x70 (All-Call) by default.
-            # We must disable this bit in the MODE1 register so it doesn't conflict with the PCA9548A mux.
-            try:
-                import smbus2
-                with smbus2.SMBus(1) as bus:
-                    mode1 = bus.read_byte_data(0x40, 0x00)
-                    # Clear bit 0 (ALLCALL) and FORCE bit 5 (Auto-Increment) which the adafruit library relies on
-                    bus.write_byte_data(0x40, 0x00, (mode1 & ~0x01) | 0x20)
-            except Exception as e:
-                print(f"[WARN] Failed to disable All-Call on PCA9685: {e}")
-                
             self._ready = True
         except Exception:
             pass
@@ -212,7 +200,7 @@ class MiniScaleArray:
     Bins 0 and 3 use internally generated weights that update on each
     classification event.
     """
-    PCA_ADDR = 0x70
+    PCA_ADDR = 0x71
     SCALE_ADDR = 0x26
     REG_WEIGHT_FLOAT = 0x10
     REG_OFFSET = 0x50

@@ -76,15 +76,6 @@ def main():
         pca = PCA9685(i2c, address=I2C_ADDRESS)
         pca.frequency = PWM_FREQ
 
-        # Software Fix: Disable PCA9685 All-Call address (0x70) to prevent conflict with PCA9548A mux
-        try:
-            import smbus2
-            with smbus2.SMBus(1) as bus:
-                mode1 = bus.read_byte_data(I2C_ADDRESS, 0x00)
-                bus.write_byte_data(I2C_ADDRESS, 0x00, (mode1 & ~0x01) | 0x20)
-        except Exception as e:
-            print(f"Warning: Could not disable All-Call on PCA9685: {e}")
-
         set_servo_angle(pca, SERVO_CHANNEL, 0)
         time.sleep(0.5)
 
