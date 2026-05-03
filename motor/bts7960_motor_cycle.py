@@ -234,9 +234,20 @@ def main() -> None:
     )
 
     try:
-        controller.motor_forward(m1_duty, m2_duty)
+        print(f"Starting M1 (Belt) at {m1_duty}% continuously...")
+        controller.motor_forward(m1_duty, 0.0)
+        time.sleep(1.0) # Stagger motor startup to avoid huge current spike
+
+        print(f"Starting M2 (Vibration) cycle: {m2_duty}% (5s ON, 8s OFF)...")
         while True:
-            time.sleep(0.2)
+            # M2 ON for 5s
+            controller.motor_forward(m1_duty, m2_duty)
+            time.sleep(5.0)
+            
+            # M2 OFF for 8s (M1 continues)
+            controller.motor_forward(m1_duty, 0.0)
+            time.sleep(8.0)
+
     except KeyboardInterrupt:
         print("\nStopping motor controller...")
     finally:

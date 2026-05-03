@@ -200,7 +200,7 @@ class MiniScaleArray:
     Bins 0 and 3 use internally generated weights that update on each
     classification event.
     """
-    PCA_ADDR = 0x71
+    PCA_ADDR = 0x70
     SCALE_ADDR = 0x26
     REG_WEIGHT_FLOAT = 0x10
     REG_OFFSET = 0x50
@@ -765,19 +765,23 @@ class SystemController:
         self._belt.motor_stop()
 
     def _vibration_loop(self):
-        """Run vibration motor 5s every 15s."""
+        """Run vibration motor 5s, pause 8s, repeat."""
         while not self._stop_event.is_set():
-            # Wait for cycle start
-            self._stop_event.wait(VIBRATION_CYCLE_SECONDS - VIBRATION_ON_SECONDS)
-            if self._stop_event.is_set():
-                break
             # Turn on
             self.vibration_active = True
             self._vibration.motor_forward(VIBRATION_DUTY_CYCLE)
-            self._stop_event.wait(VIBRATION_ON_SECONDS)
+            
+            # Wait 5s
+            if self._stop_event.wait(5.0):
+                break
+                
             # Turn off
             self._vibration.motor_stop()
             self.vibration_active = False
+            
+            # Wait 8s
+            if self._stop_event.wait(8.0):
+                break
 
     def _detection_loop(self):
         """Watch for YOLO camera detections → stop belt → wait 1.5s → capture frame → classify → sort.

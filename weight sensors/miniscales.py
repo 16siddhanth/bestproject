@@ -37,7 +37,7 @@ import smbus2
 # ── I2C address & bus ──────────────────────────────────────────────
 I2C_BUS = 1
 DEVICE_ADDR = 0x26
-MUX_ADDR = 0x71
+MUX_ADDR = 0x70
 
 # ── Official register map (from M5Stack UNIT_SCALES.h) ────────────
 # https://github.com/m5stack/M5Unit-Miniscale/blob/main/src/UNIT_SCALES.h
