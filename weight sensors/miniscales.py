@@ -114,7 +114,7 @@ class MiniScales:
 
     def set_gap(self, gap: float):
         """Set the gap (scale factor).
-        gap = known_weight_grams / (raw_with_weight − raw_empty)
+        gap = (raw_with_weight - raw_empty) / known_weight_grams
         """
         self._write(REG_GAP, struct.pack("<f", gap))
         time.sleep(0.1)
@@ -322,17 +322,91 @@ def _calibrate_all():
     print(f"\nCalibration complete: {found}/4 scales zeroed.\n")
 
 
+def _calibrate_gap_for_scale():
+    """Calibrate the GAP (scale factor) for a specific scale using a known weight.
+    This fixes wild weight readings caused by corrupted memory in the scale."""
+    print("\n╔══════════════════════════════════════╗")
+    print("║   Calibrate GAP (Fix Wild Weights)   ║")
+    print("╚══════════════════════════════════════╝")
+    
+    choice = input("Which scale has wild weights? (1, 2, 3, or 4): ").strip()
+    if choice not in ['1', '2', '3', '4']:
+        print("Invalid choice.")
+        return
+        
+    mux_channel = int(choice) - 1
+    scale = MiniScales(mux_channel=mux_channel)
+    
+    try:
+        scale.get_firmware_version()
+    except OSError:
+        print(f"[ERROR] Scale {choice} not connected on channel SD{mux_channel}.")
+        return
+
+    try:
+        scale.set_lp_filter(True)
+        scale.set_avg_filter(20)
+        scale.set_ema_filter(10)
+        
+        print("\nStep 1: Empty the scale.")
+        input("Press Enter when the scale is completely EMPTY... ")
+        print("Reading baseline...")
+        time.sleep(1)
+        raw_empty = scale.get_raw_adc()
+        print(f"Empty RAW value: {raw_empty}")
+        
+        # Tare it just so it's zeroed for future
+        scale.tare()
+        
+        print("\nStep 2: Place a KNOWN WEIGHT on the scale.")
+        weight_str = input("How heavy is the weight in grams? (e.g. 100): ").strip()
+        try:
+            known_weight = float(weight_str)
+        except ValueError:
+            print("Invalid weight. Must be a number.")
+            return
+            
+        input(f"Place the {known_weight}g weight on the scale and press Enter... ")
+        print("Reading weight...")
+        time.sleep(2)  # Let it settle
+        raw_weight = scale.get_raw_adc()
+        print(f"Weighted RAW value: {raw_weight}")
+        
+        if raw_weight == raw_empty:
+            print("[ERROR] The RAW value didn't change! The load cell might be broken or disconnected inside.")
+            return
+            
+        # GAP calculation: ADC_Delta / Weight_Delta
+        # E.g., if 100g changes RAW by 10,000, GAP is 100.
+        new_gap = (raw_weight - raw_empty) / known_weight
+        
+        print(f"\nCalculated new GAP (Scale Factor): {new_gap:.4f}")
+        print("Saving to scale memory...")
+        scale.set_gap(new_gap)
+        time.sleep(0.5)
+        
+        test_weight = scale.get_weight()
+        print(f"Verification reading: {test_weight:.1f} g")
+        print("GAP calibration complete!")
+        
+    except Exception as e:
+        print(f"[ERROR] Calibration failed: {e}")
+    finally:
+        scale.close()
+
+
 def main():
     print("M5Stack MiniScales — PCA9548A Multiplexer")
     print("==========================================\n")
     print("  1) Test a single scale")
     print("  2) Calibrate all scales (tare to 0 g)")
     print("  3) Test all scales simultaneously")
+    print("  4) Calibrate Scale Factor (Fix wild weights)")
     print()
 
     while True:
         try:
-            choice = input("Select mode (1, 2, or 3): ").strip()
+            choice = input("Select mode (1, 2, 3, or 4): ").strip()
             if choice == '1':
                 _test_scale()
                 return
@@ -342,8 +416,11 @@ def main():
             elif choice == '3':
                 _test_all_scales()
                 return
+            elif choice == '4':
+                _calibrate_gap_for_scale()
+                return
             else:
-                print("Invalid choice. Please enter 1, 2, or 3.")
+                print("Invalid choice. Please enter 1, 2, 3, or 4.")
         except KeyboardInterrupt:
             print("\nExiting.")
             return
