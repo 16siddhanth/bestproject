@@ -374,6 +374,15 @@ def _calibrate():
 # ══════════════════════════════════════════════════════════════════
 
 def main():
+    # Software Fix: Disable PCA9685 All-Call address (0x70) to prevent conflict with PCA9548A mux
+    try:
+        import smbus2
+        with smbus2.SMBus(1) as bus:
+            mode1 = bus.read_byte_data(0x40, 0x00)
+            bus.write_byte_data(0x40, 0x00, mode1 & ~0x01)
+    except Exception:
+        pass
+
     print("M5Stack MiniScales — PCA9548A Multiplexer")
     print("==========================================\n")
     print("  1) Test a single scale")
