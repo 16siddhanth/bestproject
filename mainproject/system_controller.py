@@ -46,7 +46,7 @@ from nutrient_data import (
 # ── Constants ─────────────────────────────────────────────────
 
 PWM_FREQ_HZ = 1000
-CONVEYOR_DUTY_CYCLE = 42.0
+CONVEYOR_DUTY_CYCLE = 46.0
 VIBRATION_DUTY_CYCLE = 52.0
 VIBRATION_ON_SECONDS = 5.0
 VIBRATION_CYCLE_SECONDS = 12.0
@@ -153,20 +153,26 @@ class BTS7960Controller:
 class ServoController:
     def __init__(self, channel=0, simulate=False):
         self.channel = channel
+        self.simulate = simulate
         self._ready = False
         self._pca = None
-        if simulate:
-            return
-        try:
-            board = importlib.import_module("board")
-            busio = importlib.import_module("busio")
-            pca_mod = importlib.import_module("adafruit_pca9685")
-            i2c = busio.I2C(board.SCL, board.SDA)
-            self._pca = pca_mod.PCA9685(i2c, address=0x40)
-            self._pca.frequency = 50
-            self._ready = True
-        except Exception:
-            pass
+        if not simulate:
+            try:
+                import site
+                import sys
+                user_site = site.getusersitepackages()
+                if user_site not in sys.path:
+                    sys.path.append(user_site)
+
+                board = importlib.import_module("board")
+                busio = importlib.import_module("busio")
+                adafruit_pca9685 = importlib.import_module("adafruit_pca9685")
+                i2c = busio.I2C(board.SCL, board.SDA)
+                self._pca = adafruit_pca9685.PCA9685(i2c)
+                self._pca.frequency = 50
+                self._ready = True
+            except Exception as e:
+                print(f"[HW] Servo Init Error: {e}")
 
     def set_angle(self, angle: float):
         if not self._ready or not self._pca:
@@ -252,15 +258,22 @@ def _extract_json(text: str) -> Optional[dict]:
     return None
 
 
-def classify_frame(frame_jpeg: bytes, model_name: str = "gemini-2.0-flash") -> Optional[List[Dict]]:
+def classify_frame(frame_jpeg: bytes, model_name: str = "gemini-3.0-flash") -> Optional[List[Dict]]:
     """Classify peels in the frame using an AI vision model. Returns list of {label, confidence, count}."""
     api_key = os.environ.get("CLASSIFIER_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         return None
     try:
+        import site
+        import sys
+        user_site = site.getusersitepackages()
+        if user_site not in sys.path:
+            sys.path.append(user_site)
+
         genai = importlib.import_module("google.genai")
         types = importlib.import_module("google.genai.types")
-    except ImportError:
+    except ImportError as e:
+        print(f"[CLASSIFY] ImportError: {e}")
         return None
 
     allowed = list(PEEL_NUTRITION.keys())
@@ -285,7 +298,8 @@ def classify_frame(frame_jpeg: bytes, model_name: str = "gemini-2.0-flash") -> O
                 prompt,
             ],
         )
-    except Exception:
+    except Exception as e:
+        print(f"[CLASSIFY] Gemini Error: {e}")
         return None
 
     text = getattr(response, "text", "") or ""
@@ -362,7 +376,7 @@ class SystemController:
             self._camera_ready_event.set()
 
         # AI model
-        self._ai_model = os.environ.get("CLASSIFIER_MODEL", "gemini-2.0-flash")
+        self._ai_model = os.environ.get("CLASSIFIER_MODEL", "gemini-3.0-flash")
 
         # Boot camera immediately (runs in background thread)
         if not simulate:
@@ -955,9 +969,14 @@ def main():
     parser = argparse.ArgumentParser(description="VeggieFeed System Controller")
     parser.add_argument("--simulate", action="store_true")
     parser.add_argument("--port", type=int, default=5001)
-    parser.add_argument("--env-file", type=str, default=str(BASE_DIR / ".env"))
+    # Default to mainproject/.env, fallback to bestproject/.env
+    default_env = Path(__file__).resolve().parent / ".env"
+    if not default_env.exists():
+        default_env = BASE_DIR / ".env"
+        
+    parser.add_argument("--env-file", type=str, default=str(default_env))
     args = parser.parse_args()
-
+    
     load_env(args.env_file)
 
     controller = SystemController(simulate=args.simulate, port=args.port)

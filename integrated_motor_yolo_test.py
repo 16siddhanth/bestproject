@@ -81,7 +81,7 @@ class MotorPins:
 
 
 PWM_FREQ_HZ = 1000
-MOTOR_DUTY_CYCLE_DEFAULT = 42.0
+MOTOR_DUTY_CYCLE_DEFAULT = 45.0
 IR_SENSOR_PHYSICAL_PIN = 35
 IR_SENSOR_BCM_PIN = 19
 IR_STOP_DELAY_DEFAULT = 1.5
@@ -355,9 +355,21 @@ class ServoController:
         self._ready = False
 
         try:
+            import site
+            import sys
+            user_site = site.getusersitepackages()
+            if user_site not in sys.path:
+                sys.path.append(user_site)
+
             board = importlib.import_module("board")
             busio = importlib.import_module("busio")
-            pca9685_module = importlib.import_module("adafruit_pca9685")
+            adafruit_pca9685 = importlib.import_module("adafruit_pca9685")
+            i2c = busio.I2C(board.SCL, board.SDA)
+            self._pca = adafruit_pca9685.PCA9685(i2c)
+            self._pca.frequency = 50
+            self._ready = True
+        except Exception as exc:
+            pass
         except ImportError as exc:
             print(
                 "[WARN] Servo dependencies unavailable; servo moves disabled. "
