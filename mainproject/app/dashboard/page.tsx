@@ -10,7 +10,6 @@ import BinStatusPanel from "@/components/BinStatusPanel"
 import ClassificationLog from "@/components/ClassificationLog"
 import Link from "next/link"
 
-const SYSTEM_API = process.env.NEXT_PUBLIC_SYSTEM_API || "http://localhost:5001"
 const POLL_INTERVAL = 1200
 
 interface HwStatus {
@@ -140,8 +139,8 @@ export default function Dashboard() {
     }
   }
 
-  const streamUrl = systemStatus.running && systemStatus.camera_connected
-    ? `${SYSTEM_API}/system/stream`
+  const streamUrl = systemStatus.camera_connected
+    ? "/api/system/stream"
     : null
 
   return (

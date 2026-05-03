@@ -4,7 +4,10 @@
   "private": true,
   "scripts": {
     "build": "next build",
-    "dev": "next dev",
+    "dev": "python3 system_controller.py & next dev",
+    "dev:frontend": "next dev",
+    "dev:backend": "python3 system_controller.py",
+    "dev:simulate": "python3 system_controller.py --simulate & next dev",
     "lint": "next lint",
     "start": "next start"
   },
