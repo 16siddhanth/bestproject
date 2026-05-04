@@ -308,68 +308,49 @@ def compute_suitability_score(
     current_bin_state: Optional[BinState] = None,
 ) -> float:
     """
-    Compute how suitable a peel is for a given animal.
-
-    Score = weighted sum of how well each nutrient in the peel
-    contributes toward filling the animal's ideal range.
-
-    Higher score = better match. Range roughly 0-100.
+    Compute suitability using Ratio Matching.
+    Compares the 'shape' of the peel's nutrient profile to the animal's needs.
     """
     nutrition = PEEL_NUTRITION.get(peel_label)
     profile = ANIMAL_PROFILES.get(animal)
     if not nutrition or not profile:
         return 0.0
 
-    score = 0.0
-    max_possible = 0.0
-
-    for key in NUTRIENT_KEYS:
-        weight = NUTRIENT_WEIGHTS.get(key, 1.0)
-        max_possible += weight * 10.0
-
+    # Calculate 'Nutrient Density' vector for the peel
+    # We use a subset of core nutrients to define the 'type' of feed
+    core_keys = ["protein_g", "fiber_g", "calcium_mg"]
+    
+    peel_vector = []
+    animal_vector = []
+    
+    for key in core_keys:
         peel_val = nutrition.get(key, 0.0)
-        low, high = profile.get(key, (0.0, 100.0))
-        mid = (low + high) / 2.0
+        low, high = profile.get(key, (1.0, 100.0))
+        target_val = (low + high) / 2.0
+        
+        # Normalize by typical values to keep units comparable
+        norm = 100.0 if "mg" in key else 10.0
+        peel_vector.append(peel_val / norm)
+        animal_vector.append(target_val / norm)
 
-        if mid == 0:
-            continue
-
-        # How well does this peel's nutrient ratio align with the target?
-        # Perfect match = 10 points * weight
-        ratio = peel_val / mid if mid > 0 else 0.0
-
-        # Score peaks at ratio = 1.0 (perfect match) and drops off
-        if ratio <= 0:
-            nutrient_score = 0.0
-        elif ratio <= 1.0:
-            nutrient_score = ratio * 10.0
-        else:
-            # Overshoot penalty (diminishing returns but not zero)
-            nutrient_score = max(0.0, 10.0 - (ratio - 1.0) * 5.0)
-
-        score += nutrient_score * weight
-
-    if max_possible == 0:
+    # Calculate Dot Product / Magnitude (Cosine Similarity)
+    dot = sum(p * a for p, a in zip(peel_vector, animal_vector))
+    mag_p = sum(p**2 for p in peel_vector)**0.5
+    mag_a = sum(a**2 for a in animal_vector)**0.5
+    
+    if mag_p == 0 or mag_a == 0:
         return 0.0
+        
+    similarity = dot / (mag_p * mag_a)
+    score = similarity * 100.0
 
-    # Normalize to 0-100
-    normalized = (score / max_possible) * 100.0
-
-    # Adaptive bias: if current bin already has lots of a nutrient,
-    # slightly reduce score to encourage distribution
+    # Adaptive bias: favor bins that are currently 'hungry' for this specific profile
     if current_bin_state and current_bin_state.peel_count > 0:
-        profile_100g = current_bin_state.get_nutrient_profile_per_100g()
-        excess_penalty = 0.0
-        for key in NUTRIENT_KEYS:
-            current_val = profile_100g.get(key, 0.0)
-            _, high = profile.get(key, (0.0, 100.0))
-            if high > 0 and current_val > high:
-                # Already exceeds target — small penalty
-                excess_ratio = (current_val - high) / high
-                excess_penalty += min(excess_ratio * 2.0, 5.0)
-        normalized = max(0.0, normalized - excess_penalty)
-
-    return round(normalized, 2)
+        # If bin is already getting too full, slightly penalize
+        if current_bin_state.total_weight_g > 500:
+            score *= 0.8
+            
+    return score
 
 
 def find_optimal_bin(

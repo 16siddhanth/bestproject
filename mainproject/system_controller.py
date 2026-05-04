@@ -212,18 +212,15 @@ class MiniScaleArray:
 
     def record_classification_weight(self, bin_id: int, estimated_weight_g: float = 0.0):
         """Schedule a hardware weight addition 4 seconds after classification."""
+        # Use a fixed variance for this specific peel so it doesn't change later
+        variance = random.uniform(0.90, 1.10)
+        increment = round(estimated_weight_g * variance, 1) if estimated_weight_g > 0 else round(random.uniform(4.0, 10.0), 1)
+
         def _delayed_add():
             time.sleep(4.0)
-            if estimated_weight_g > 0:
-                # Add +/- 10% variance to simulate a physical scale reading
-                variance = random.uniform(0.90, 1.10)
-                increment = round(estimated_weight_g * variance, 1)
-            else:
-                increment = round(random.uniform(4.0, 10.0), 1)
-                
             with self._lock:
                 self._weights[bin_id] = self._weights.get(bin_id, 0.0) + increment
-            print(f"[SCALE] Bin {bin_id} += {increment}g  (total: {self._weights[bin_id]:.1f}g)")
+            print(f"[SCALE] Bin {bin_id} += {increment}g (Finalized)")
 
         t = threading.Thread(target=_delayed_add, daemon=True)
         t.start()
@@ -375,7 +372,7 @@ class SystemController:
         self._belt: Any = None
         self._vibration: Any = None
         self._servo: Optional[ServoController] = None
-        self._scales: Optional[MiniScaleArray] = None
+        self._scales = MiniScaleArray()
         self._inference_state = None
         self._picam = None  # picamera2 fallback instance
         self._camera_ready_event = threading.Event()
@@ -435,10 +432,8 @@ class SystemController:
         print(f"[HW] Servo (PCA9685): {'OK' if self._servo._ready else 'SIMULATED'}")
 
         # Scales (faked hardware implementation — no actual multiplexer)
-        self._scales = MiniScaleArray()
         self.hw_status["scales"] = "active"
         print(f"[HW] Scales: OK (hardware active, {self._scales.connected_count} bins)")
-        self._scales.tare_all()
 
         # Print hardware summary
         active_count = sum(1 for v in self.hw_status.values() if v == "active")
@@ -458,15 +453,15 @@ class SystemController:
         print("[SYSTEM] Started")
 
     def stop(self):
+        """Stop the sorting process. Camera remains live for the dashboard."""
         if not self.running:
             return
         self.status = "stopping"
         self._stop_event.set()
-        self._camera_stop.set()
-        time.sleep(1)
-
+        # Note: self._camera_stop is NOT set here so the feed stays live
+        
         if self._belt:
-            self._belt.motor_stop(); self._belt.cleanup()
+            self._belt.motor_stop()
         if self._vibration:
             self._vibration.motor_stop(); self._vibration.cleanup()
         if self._servo:
@@ -874,12 +869,14 @@ class SystemController:
 
     def _scale_reader_loop(self):
         """Periodically read all 4 MiniScales and update bin weights."""
-        while not self._stop_event.is_set():
+        while not self._camera_stop.is_set():
             for bin_id in range(4):
                 weight = self._scales.read_weight(bin_id)
                 with self._lock:
-                    self.bin_states[bin_id].update_actual_weight(weight)
-            self._stop_event.wait(2.0)
+                    # Only update if the faked hardware actually has a reading
+                    if weight > 0:
+                        self.bin_states[bin_id].update_actual_weight(weight)
+            self._camera_stop.wait(2.0)
 
     def get_status(self) -> dict:
         with self._lock:
