@@ -258,7 +258,7 @@ def _extract_json(text: str) -> Optional[dict]:
     return None
 
 
-def classify_frame(frame_jpeg: bytes, model_name: str = "gemini-3.0-flash") -> Optional[List[Dict]]:
+def classify_frame(frame_jpeg: bytes, model_name: str = "gemini-3-flash-preview") -> Optional[List[Dict]]:
     """Classify peels in the frame using an AI vision model. Returns list of {label, confidence, count}."""
     api_key = os.environ.get("CLASSIFIER_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
@@ -376,7 +376,7 @@ class SystemController:
             self._camera_ready_event.set()
 
         # AI model
-        self._ai_model = os.environ.get("CLASSIFIER_MODEL", "gemini-3.0-flash")
+        self._ai_model = os.environ.get("CLASSIFIER_MODEL", "gemini-3-flash-preview")
 
         # Boot camera immediately (runs in background thread)
         if not simulate:
