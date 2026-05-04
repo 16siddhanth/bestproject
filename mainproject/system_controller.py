@@ -759,13 +759,10 @@ class SystemController:
             try:
                 state = self._inference_state.get_state()
 
-                # YOLO11n detects an object on camera
+                # YOLO11n detects an object on camera → stop belt
                 detections = state.get("detections", [])
                 if detections:
                     self.status = "detecting"
-                    
-                    # Wait 0.4 seconds to let the object move into the center of the classification zone
-                    time.sleep(0.4)
                     
                     # Snapshot last frame BEFORE stopping to force a fresh post-stop frame (prevent blur)
                     frame_before_stop = self._inference_state.get_frame_jpeg()

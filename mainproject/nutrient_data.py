@@ -358,28 +358,37 @@ def find_optimal_bin(
     bin_states: Dict[int, BinState],
 ) -> int:
     """
-    Given one or more peel labels (multi-peel case), find the optimal
-    animal bin by computing aggregate suitability scores.
-
-    Returns the bin_id (0-3).
+    Find optimal bin using a combination of Ratio Matching and Load Balancing.
+    If multiple animals are a good fit, favor the one with the least food.
     """
-    best_bin = 0
-    best_score = -1.0
-
+    scores = {}
     for bin_id, state in bin_states.items():
         animal = state.animal
         total_score = 0.0
         for label in peel_labels:
             total_score += compute_suitability_score(label, animal, state)
+        scores[bin_id] = total_score / max(len(peel_labels), 1)
 
-        # Average score across all peels in this batch
-        avg_score = total_score / max(len(peel_labels), 1)
-
-        if avg_score > best_score:
-            best_score = avg_score
-            best_bin = bin_id
-
-    return best_bin
+    # Sort bins by score (descending)
+    sorted_bins = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    
+    if not sorted_bins:
+        return 0
+        
+    best_bin_id, best_score = sorted_bins[0]
+    
+    # Check if the second-best is close (within 5 points)
+    # If so, pick the one between the two that has the lowest weight
+    if len(sorted_bins) > 1:
+        second_bin_id, second_score = sorted_bins[1]
+        if (best_score - second_score) < 5.0:
+            # They are very close matches! Load balance instead.
+            w1 = bin_states[best_bin_id].total_weight_g
+            w2 = bin_states[second_bin_id].total_weight_g
+            if w2 < w1:
+                return second_bin_id
+                
+    return best_bin_id
 
 
 def create_initial_bin_states() -> Dict[int, BinState]:
