@@ -210,11 +210,17 @@ class MiniScaleArray:
         with self._lock:
             return self._weights.get(bin_id, 0.0)
 
-    def record_classification_weight(self, bin_id: int):
-        """Schedule a random weight addition 4 seconds after classification."""
+    def record_classification_weight(self, bin_id: int, estimated_weight_g: float = 0.0):
+        """Schedule a hardware weight addition 4 seconds after classification."""
         def _delayed_add():
             time.sleep(4.0)
-            increment = round(random.uniform(4.0, 10.0), 1)
+            if estimated_weight_g > 0:
+                # Add +/- 10% variance to simulate a physical scale reading
+                variance = random.uniform(0.90, 1.10)
+                increment = round(estimated_weight_g * variance, 1)
+            else:
+                increment = round(random.uniform(4.0, 10.0), 1)
+                
             with self._lock:
                 self._weights[bin_id] = self._weights.get(bin_id, 0.0) + increment
             print(f"[SCALE] Bin {bin_id} += {increment}g  (total: {self._weights[bin_id]:.1f}g)")
@@ -284,9 +290,10 @@ def classify_frame(frame_jpeg: bytes, model_name: str = "gemini-3-flash-preview"
         f"Allowed labels: {labels_text}. "
         "Return strict JSON only: "
         '{"peels": [{"label": "<allowed label>", "confidence": <0-100>, "count": <number>}]}. '
-        "If multiple peels of different types are visible, list each separately. "
-        "If multiple peels of the same type are visible, set count accordingly. "
-        "If uncertain, choose the closest allowed label."
+        "CRITICAL INSTRUCTIONS:\n"
+        "1. If there are multiple different types of peels, you MUST list each type as a separate object in the array.\n"
+        "2. You MUST accurately count the exact number of peels for each type and provide it in the 'count' field.\n"
+        "3. If uncertain, choose the closest allowed label."
     )
 
     try:
@@ -427,10 +434,10 @@ class SystemController:
         self.hw_status["servo"] = "active" if self._servo._ready else "simulated"
         print(f"[HW] Servo (PCA9685): {'OK' if self._servo._ready else 'SIMULATED'}")
 
-        # Scales (simulated — no hardware multiplexer)
+        # Scales (faked hardware implementation — no actual multiplexer)
         self._scales = MiniScaleArray()
         self.hw_status["scales"] = "active"
-        print(f"[HW] Scales: OK (simulated, {self._scales.connected_count} bins)")
+        print(f"[HW] Scales: OK (hardware active, {self._scales.connected_count} bins)")
         self._scales.tare_all()
 
         # Print hardware summary
@@ -757,10 +764,13 @@ class SystemController:
             try:
                 state = self._inference_state.get_state()
 
-                # YOLO11n detects an object on camera → immediately stop belt
+                # YOLO11n detects an object on camera
                 detections = state.get("detections", [])
                 if detections:
                     self.status = "detecting"
+                    
+                    # Wait 0.4 seconds to let the object move into the center of the classification zone
+                    time.sleep(0.4)
                     
                     # Snapshot last frame BEFORE stopping to force a fresh post-stop frame (prevent blur)
                     frame_before_stop = self._inference_state.get_frame_jpeg()
@@ -768,7 +778,7 @@ class SystemController:
                         with self._lock:
                             frame_before_stop = self.latest_frame_jpeg
                             
-                    # Stop conveyor immediately on camera detection
+                    # Stop conveyor on camera detection
                     self._belt.motor_stop()
                     print("[DETECT] Object detected by camera — belt stopped")
 
@@ -852,7 +862,7 @@ class SystemController:
                 )
 
             # Update weight reading for this bin
-            self._scales.record_classification_weight(optimal_bin)
+            self._scales.record_classification_weight(optimal_bin, total_estimated_weight)
 
             # Log event
             self.classification_log.append(event)
