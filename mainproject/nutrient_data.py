@@ -377,11 +377,11 @@ def find_optimal_bin(
         
     best_bin_id, best_score = sorted_bins[0]
     
-    # Check if the second-best is close (within 5 points)
+    # Check if the second-best is close (within 9 points)
     # If so, pick the one between the two that has the lowest weight
     if len(sorted_bins) > 1:
         second_bin_id, second_score = sorted_bins[1]
-        if (best_score - second_score) < 5.0:
+        if (best_score - second_score) < 9.0:
             # They are very close matches! Load balance instead.
             w1 = bin_states[best_bin_id].total_weight_g
             w2 = bin_states[second_bin_id].total_weight_g
