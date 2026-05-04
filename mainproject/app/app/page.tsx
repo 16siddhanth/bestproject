@@ -139,7 +139,7 @@ export default function VeggieFeedApp() {
   }
 
   const streamUrl = systemStatus.camera_connected
-    ? "/api/system/stream"
+    ? typeof window !== "undefined" ? `http://${window.location.hostname}:5001/system/stream` : null
     : null
 
   return (
