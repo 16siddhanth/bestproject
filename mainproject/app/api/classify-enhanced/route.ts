@@ -11,12 +11,11 @@ const NUTRITION_DATA: Record<string, { protein: number; fiber: number; moisture:
   "Tomato Skins": { protein: 0.9, fiber: 1.2, moisture: 94.0, energy: 18 },
   "Cucumber Peels": { protein: 0.7, fiber: 1.0, moisture: 95.0, energy: 15 },
   "Cabbage Leaves": { protein: 1.3, fiber: 2.5, moisture: 92.0, energy: 25 },
-  "Lettuce": { protein: 1.4, fiber: 1.3, moisture: 95.0, energy: 15 },
+
   "Bell Pepper Scraps": { protein: 1.0, fiber: 2.1, moisture: 92.0, energy: 31 },
   "Broccoli Stems": { protein: 2.8, fiber: 2.6, moisture: 89.0, energy: 34 },
   "Cauliflower Leaves": { protein: 1.9, fiber: 2.0, moisture: 92.0, energy: 25 },
-  "Celery": { protein: 0.7, fiber: 1.6, moisture: 95.0, energy: 14 },
-  "Spinach": { protein: 2.9, fiber: 2.2, moisture: 91.0, energy: 23 },
+
 }
 
 // ── Feed recommendations per class ───────────────────────────
@@ -44,10 +43,7 @@ const FEED_RECOMMENDATIONS: Record<string, Array<{ animalType: string; suitabili
     { animalType: "Cattle", suitability: "High", processingRequired: ["Chopping", "Wilting"], nutritionalBenefit: "Excellent roughage with good vitamin K content." },
     { animalType: "Poultry", suitability: "Medium", processingRequired: ["Shredding"], nutritionalBenefit: "Provides variety and micronutrients in poultry diets." },
   ],
-  "Lettuce": [
-    { animalType: "Rabbits", suitability: "High", processingRequired: ["Fresh feeding"], nutritionalBenefit: "Hydrating and palatable, natural rabbit food." },
-    { animalType: "Poultry", suitability: "Medium", processingRequired: ["Chopping"], nutritionalBenefit: "Low-calorie green supplement." },
-  ],
+
   "Bell Pepper Scraps": [
     { animalType: "Poultry", suitability: "High", processingRequired: ["Chopping", "Removing seeds"], nutritionalBenefit: "Vitamin C-rich, supports immune function." },
     { animalType: "Pigs", suitability: "Medium", processingRequired: ["Chopping", "Mixing"], nutritionalBenefit: "Good palatability and vitamin content." },
@@ -60,14 +56,7 @@ const FEED_RECOMMENDATIONS: Record<string, Array<{ animalType: string; suitabili
     { animalType: "Cattle", suitability: "High", processingRequired: ["Chopping", "Fresh or ensiled"], nutritionalBenefit: "Good protein and fiber balance for ruminants." },
     { animalType: "Goats", suitability: "High", processingRequired: ["Fresh feeding"], nutritionalBenefit: "Readily consumed, good nutritional profile." },
   ],
-  "Celery": [
-    { animalType: "Rabbits", suitability: "High", processingRequired: ["Chopping into small pieces"], nutritionalBenefit: "Crunchy texture supports dental health." },
-    { animalType: "Cattle", suitability: "Medium", processingRequired: ["Chopping", "Mixing"], nutritionalBenefit: "Low-calorie fiber supplement." },
-  ],
-  "Spinach": [
-    { animalType: "Poultry", suitability: "High", processingRequired: ["Fresh feeding", "Chopping"], nutritionalBenefit: "Iron and calcium rich, supports egg shell quality." },
-    { animalType: "Pigs", suitability: "Medium", processingRequired: ["Mixing with feed"], nutritionalBenefit: "High vitamin and mineral content." },
-  ],
+
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -75,12 +64,12 @@ const FEED_RECOMMENDATIONS: Record<string, Array<{ animalType: string; suitabili
 function pickColorForLabel(label: string) {
   const l = label.toLowerCase()
   if (l.includes("carrot") || l.includes("orange")) return "#f97316"
-  if (l.includes("leafy") || l.includes("lettuce") || l.includes("spinach")) return "#22c55e"
+  if (l.includes("leafy")) return "#22c55e"
   if (l.includes("tomato") || l.includes("pepper")) return "#ef4444"
   if (l.includes("onion")) return "#a3a3a3"
   if (l.includes("cucumber") || l.includes("broccoli") || l.includes("cabbage") || l.includes("cauliflower")) return "#16a34a"
   if (l.includes("potato")) return "#d4a574"
-  if (l.includes("celery")) return "#84cc16"
+
   return "#f59e0b"
 }
 

@@ -48,7 +48,7 @@ Automated vegetable waste peel classification and sorting system built with a Ra
 5. **Sorting**: The peel is assigned to the bin of the animal that most needs those specific nutrients. The PCA9685 servo controller rotates the diverter arm to the appropriate bin (30°, 70°, 110°, 150°).
 6. **Resumption**: The conveyor resumes operation. Four M5 MiniScales independently measure the accumulating weight in each bin to provide real-time updates to the dashboard.
 
-## Supported Classes (13)
+## Supported Classes (10)
 
 | Class | Optimal Bin | Base Nutrients |
 |-------|-------------|----------------|
@@ -59,12 +59,9 @@ Automated vegetable waste peel classification and sorting system built with a Ra
 | Cucumber Peels| Evaluated live | High moisture |
 | Brinjal Peels | Evaluated live | Fiber |
 | Cabbage Leaves| Evaluated live | Calcium |
-| Spinach | Evaluated live | Protein/Calcium |
 | Bell Pepper Scraps | Evaluated live | Fiber |
-| Lettuce | Evaluated live | High moisture |
 | Broccoli Stems | Evaluated live | Protein |
 | Cauliflower Leaves | Evaluated live | Protein |
-| Celery | Evaluated live | Calcium |
 
 ## Directory Structure
 

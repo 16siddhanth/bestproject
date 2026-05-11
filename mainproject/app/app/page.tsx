@@ -37,9 +37,9 @@ const DEFAULT_BINS = {
     peel_count: 0,
     nutrients_per_100g: { calories_kcal: 0, protein_g: 0, fat_g: 0, fiber_g: 0, calcium_mg: 0, phosphorus_mg: 0 },
     target_ranges: {
-      calories_kcal: { min: 250, max: 300 }, protein_g: { min: 12, max: 16 },
-      fat_g: { min: 3, max: 5 }, fiber_g: { min: 17, max: 25 },
-      calcium_mg: { min: 400, max: 800 }, phosphorus_mg: { min: 200, max: 500 },
+      calories_kcal: { min: 230, max: 270 }, protein_g: { min: 15, max: 17.5 },
+      fat_g: { min: 3, max: 6 }, fiber_g: { min: 17, max: 21 },
+      calcium_mg: { min: 600, max: 800 }, phosphorus_mg: { min: 300, max: 450 },
     },
   },
   "1": {
@@ -47,9 +47,9 @@ const DEFAULT_BINS = {
     peel_count: 0,
     nutrients_per_100g: { calories_kcal: 0, protein_g: 0, fat_g: 0, fiber_g: 0, calcium_mg: 0, phosphorus_mg: 0 },
     target_ranges: {
-      calories_kcal: { min: 250, max: 280 }, protein_g: { min: 14, max: 18 },
-      fat_g: { min: 3, max: 5 }, fiber_g: { min: 15, max: 22 },
-      calcium_mg: { min: 400, max: 600 }, phosphorus_mg: { min: 200, max: 400 },
+      calories_kcal: { min: 200, max: 240 }, protein_g: { min: 7, max: 11 },
+      fat_g: { min: 2, max: 5 }, fiber_g: { min: 15, max: 25 },
+      calcium_mg: { min: 300, max: 500 }, phosphorus_mg: { min: 200, max: 300 },
     },
   },
   "2": {
@@ -57,9 +57,9 @@ const DEFAULT_BINS = {
     peel_count: 0,
     nutrients_per_100g: { calories_kcal: 0, protein_g: 0, fat_g: 0, fiber_g: 0, calcium_mg: 0, phosphorus_mg: 0 },
     target_ranges: {
-      calories_kcal: { min: 280, max: 320 }, protein_g: { min: 16, max: 22 },
+      calories_kcal: { min: 300, max: 320 }, protein_g: { min: 20, max: 23 },
       fat_g: { min: 3, max: 8 }, fiber_g: { min: 3, max: 5 },
-      calcium_mg: { min: 800, max: 1200 }, phosphorus_mg: { min: 400, max: 600 },
+      calcium_mg: { min: 900, max: 1000 }, phosphorus_mg: { min: 600, max: 700 },
     },
   },
   "3": {
@@ -67,9 +67,9 @@ const DEFAULT_BINS = {
     peel_count: 0,
     nutrients_per_100g: { calories_kcal: 0, protein_g: 0, fat_g: 0, fiber_g: 0, calcium_mg: 0, phosphorus_mg: 0 },
     target_ranges: {
-      calories_kcal: { min: 320, max: 360 }, protein_g: { min: 13, max: 18 },
-      fat_g: { min: 5, max: 10 }, fiber_g: { min: 5, max: 8 },
-      calcium_mg: { min: 500, max: 900 }, phosphorus_mg: { min: 400, max: 700 },
+      calories_kcal: { min: 320, max: 340 }, protein_g: { min: 13, max: 18 },
+      fat_g: { min: 3, max: 8 }, fiber_g: { min: 5, max: 7 },
+      calcium_mg: { min: 500, max: 700 }, phosphorus_mg: { min: 450, max: 650 },
     },
   },
 }

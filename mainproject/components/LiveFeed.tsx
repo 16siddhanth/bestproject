@@ -39,12 +39,12 @@ interface LiveFeedProps {
 function pickColor(label: string): string {
   const l = label.toLowerCase()
   if (l.includes("carrot")) return "#f97316"
-  if (l.includes("lettuce") || l.includes("spinach")) return "#22c55e"
+
   if (l.includes("tomato") || l.includes("pepper")) return "#ef4444"
   if (l.includes("onion")) return "#a3a3a3"
   if (l.includes("cucumber") || l.includes("broccoli") || l.includes("cabbage") || l.includes("cauliflower")) return "#16a34a"
   if (l.includes("potato")) return "#d4a574"
-  if (l.includes("celery")) return "#84cc16"
+
   return "#f59e0b"
 }
 

@@ -3,7 +3,7 @@
 export const vegetableClasses = [
   "Carrot Peels",
   "Potato Skins",
-  "Lettuce",
+
   "Cabbage Leaves",
   "Onion Skins",
   "Tomato Skins",
@@ -11,8 +11,7 @@ export const vegetableClasses = [
   "Bell Pepper Scraps",
   "Broccoli Stems",
   "Cauliflower Leaves",
-  "Celery",
-  "Spinach",
+
 ] as const
 
 export type VegetableClass = (typeof vegetableClasses)[number]
