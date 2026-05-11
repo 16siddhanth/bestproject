@@ -46,8 +46,8 @@ from nutrient_data import (
 # ── Constants ─────────────────────────────────────────────────
 
 PWM_FREQ_HZ = 1000
-CONVEYOR_DUTY_CYCLE = 46.0
-VIBRATION_DUTY_CYCLE = 52.0
+CONVEYOR_DUTY_CYCLE = 60.0
+VIBRATION_DUTY_CYCLE = 60.0
 VIBRATION_ON_SECONDS = 5.0
 VIBRATION_CYCLE_SECONDS = 12.0
 POST_STOP_CAPTURE_DELAY = 2.0  # seconds to wait after belt stops before capturing frame
@@ -354,6 +354,7 @@ class SystemController:
         self.bin_states = create_initial_bin_states()
         self.classification_log: List[ClassificationEvent] = []
         self.vibration_active = False
+        self._belt_stopped = False  # True while belt is stopped for classification
         self.latest_frame_jpeg: Optional[bytes] = None
         self.camera_connected = False
         self.camera_mode = "none"  # "yolo" | "picamera" | "none"
@@ -728,8 +729,16 @@ class SystemController:
         self._belt.motor_stop()
 
     def _vibration_loop(self):
-        """Run vibration motor according to constants."""
+        """Run vibration motor according to constants.
+        Pauses automatically when the belt is stopped (during classification)."""
         while not self._stop_event.is_set():
+            # Skip vibration while belt is stopped for classification
+            if getattr(self, '_belt_stopped', False):
+                self._vibration.motor_stop()
+                self.vibration_active = False
+                self._stop_event.wait(0.2)
+                continue
+
             # Turn on
             self.vibration_active = True
             self._vibration.motor_forward(VIBRATION_DUTY_CYCLE)
@@ -771,8 +780,9 @@ class SystemController:
                             frame_before_stop = self.latest_frame_jpeg
                             
                     # Stop conveyor on camera detection
+                    self._belt_stopped = True
                     self._belt.motor_stop()
-                    print("[DETECT] Object detected by camera — belt stopped")
+                    print("[DETECT] Object detected by camera — belt stopped, vibration paused")
 
                     # Wait for stable frame capture
                     self.status = "classifying"
@@ -804,7 +814,8 @@ class SystemController:
                         else:
                             print("[CLASSIFY] No result from AI classifier")
 
-                    # Resume conveyor
+                    # Resume conveyor and vibration
+                    self._belt_stopped = False
                     self._belt.motor_forward(CONVEYOR_DUTY_CYCLE)
                     self.status = "running"
 
