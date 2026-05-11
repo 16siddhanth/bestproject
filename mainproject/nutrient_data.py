@@ -154,6 +154,34 @@ for _v in PEEL_NUTRITION.values():
     _v["avg_peel_weight_g"] = _v["avg_peel_weight_dm_g"]
 
 
+# ── Per-class fresh weight ranges (grams, as-fed) ────────────
+# Each peel is assigned a random fresh weight from these ranges
+# every time it is classified.  The fresh weight is then
+# converted to DM weight using the peel's moisture percentage.
+PEEL_WEIGHT_RANGES: Dict[str, Tuple[float, float]] = {
+    "Potato Skins":       (1.8, 2.2),
+    "Onion Skins":        (1.8, 2.2),
+    "Carrot Peels":       (4.0, 5.0),
+    "Cucumber Peels":     (6.0, 8.0),
+    # All remaining classes: 4–8 g
+    "Tomato Skins":       (3.0, 5.0),
+    "Brinjal Peels":      (4.0, 8.0),
+    "Cabbage Leaves":     (6.0, 10.0),
+    "Bell Pepper Scraps": (8.0, 10.0),
+    "Broccoli Stems":     (7.0, 11.0),
+    "Cauliflower Leaves": (8.0, 12.0),
+}
+
+# Default range for any label not listed above
+_DEFAULT_WEIGHT_RANGE: Tuple[float, float] = (4.0, 8.0)
+
+
+def _random_fresh_weight(peel_label: str) -> float:
+    """Return a random fresh (as-fed) weight in grams for one peel."""
+    lo, hi = PEEL_WEIGHT_RANGES.get(peel_label, _DEFAULT_WEIGHT_RANGE)
+    return round(random.uniform(lo, hi), 1)
+
+
 # Nutrient keys used for matching and accumulation
 # All values are per 100 g DM.
 NUTRIENT_KEYS = [
@@ -295,7 +323,7 @@ class BinState:
             dm_frac = nutrition.get("dm_pct", 10.0) / 100.0
             dm_weight = 0.0
             for _ in range(count):
-                fresh_w = round(random.uniform(1.7, 2.5), 1)
+                fresh_w = _random_fresh_weight(peel_label)
                 dm_weight += fresh_w * dm_frac
 
         self.estimated_weight_g += dm_weight
@@ -446,18 +474,18 @@ def create_initial_bin_states() -> Dict[int, BinState]:
 
 
 def get_estimated_weight(peel_label: str, count: int = 1) -> float:
-    """Get estimated DM weight for a peel type using a random fresh weight
-    (1.7g to 2.5g) for each peel."""
+    """Get estimated DM weight for a peel type using a per-class random
+    fresh weight converted to DM."""
     nutrition = PEEL_NUTRITION.get(peel_label)
     if not nutrition:
         return 1.0 * count  # conservative DM fallback
-        
+
     dm_frac = nutrition.get("dm_pct", 10.0) / 100.0
     total_dm_weight = 0.0
     for _ in range(count):
-        fresh_w = round(random.uniform(1.7, 2.5), 1)
+        fresh_w = _random_fresh_weight(peel_label)
         total_dm_weight += fresh_w * dm_frac
-        
+
     return total_dm_weight
 
 
