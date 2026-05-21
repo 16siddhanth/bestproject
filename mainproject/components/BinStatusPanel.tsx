@@ -72,35 +72,52 @@ const NUTRIENT_DISPLAY: {
   color: string
   glowColor: string
 }[] = [
-  { key: "protein_g",     label: "Protein",    unit: "g",    color: "bg-blue-500",   glowColor: "shadow-blue-500/30" },
-  { key: "fiber_g",       label: "Fiber",      unit: "g",    color: "bg-green-500",  glowColor: "shadow-green-500/30" },
-  { key: "fat_g",         label: "Fat",        unit: "g",    color: "bg-orange-400", glowColor: "shadow-orange-400/30" },
-  { key: "calcium_mg",    label: "Calcium",    unit: "mg",   color: "bg-purple-500", glowColor: "shadow-purple-500/30" },
-  { key: "phosphorus_mg", label: "Phosphorus", unit: "mg",   color: "bg-teal-400",   glowColor: "shadow-teal-400/30" },
-  { key: "calories_kcal", label: "Energy",     unit: "kcal", color: "bg-amber-500",  glowColor: "shadow-amber-500/30" },
+  { key: "protein_g",     label: "Protein",    unit: "%",          color: "bg-blue-500",   glowColor: "shadow-blue-500/30" },
+  { key: "fiber_g",       label: "Fiber",      unit: "%",          color: "bg-green-500",  glowColor: "shadow-green-500/30" },
+  { key: "fat_g",         label: "Fat",        unit: "%",          color: "bg-orange-400", glowColor: "shadow-orange-400/30" },
+  { key: "calcium_mg",    label: "Calcium",    unit: "mg/100g",    color: "bg-purple-500", glowColor: "shadow-purple-500/30" },
+  { key: "phosphorus_mg", label: "Phosphorus", unit: "mg/100g",    color: "bg-teal-400",   glowColor: "shadow-teal-400/30" },
+  { key: "calories_kcal", label: "Energy",     unit: "kcal/100g",  color: "bg-amber-500",  glowColor: "shadow-amber-500/30" },
 ]
 
 /**
- * Compute how far the current value is toward the target midpoint.
+ * Reference bin fill target in grams DM.
+ * Bars reach their full profile-match display once the bin has
+ * accumulated this much dry-matter weight.
+ */
+const BIN_TARGET_DM_G = 50
+
+/** Minimum DM weight before showing status indicators and target zones. */
+const MIN_WEIGHT_FOR_STATUS_G = 5
+
+/**
+ * Compute how far the current value is toward the target midpoint,
+ * scaled by how full the bin is (weight / BIN_TARGET_DM_G).
  * Returns 0-100 for under-target, 100 for at-target, and >100 for over.
  * Clamped at 120 for display purposes.
  */
-function getNutrientProgress(value: number, target: TargetRange | undefined): number {
+function getNutrientProgress(value: number, target: TargetRange | undefined, weight: number): number {
   if (!target || target.max <= 0) return 0
   const mid = (target.min + target.max) / 2
   if (mid <= 0) return 0
-  return Math.min(120, (value / mid) * 100)
+  // Scale by how full the bin is — bars gradually fill as peels accumulate
+  const weightFactor = Math.min(weight / BIN_TARGET_DM_G, 1.0)
+  return Math.min(120, (value / mid) * 100 * weightFactor)
 }
 
 /**
  * Returns a status label and color based on where value sits vs target range.
+ * Status is suppressed when the bin has insufficient weight to be meaningful.
  */
 function getNutrientStatus(
   value: number,
-  target: TargetRange | undefined
+  target: TargetRange | undefined,
+  weight: number
 ): { status: "empty" | "low" | "optimal" | "high"; statusColor: string } {
   if (!target) return { status: "empty", statusColor: "text-white/30" }
   if (value <= 0) return { status: "empty", statusColor: "text-white/30" }
+  // Don't show composition-based status until bin has enough material
+  if (weight < MIN_WEIGHT_FOR_STATUS_G) return { status: "empty", statusColor: "text-white/30" }
   if (value < target.min) return { status: "low", statusColor: "text-yellow-400" }
   if (value <= target.max) return { status: "optimal", statusColor: "text-emerald-400" }
   return { status: "high", statusColor: "text-red-400" }
@@ -142,13 +159,16 @@ export default function BinStatusPanel({ bins }: BinStatusPanelProps) {
                 {NUTRIENT_DISPLAY.map((nutrient) => {
                   const value = bin.nutrients_per_100g?.[nutrient.key as keyof BinNutrients] ?? 0
                   const target = bin.target_ranges?.[nutrient.key]
-                  const progress = getNutrientProgress(value, target)
-                  const { status, statusColor } = getNutrientStatus(value, target)
+                  const progress = getNutrientProgress(value, target, weight)
+                  const { status, statusColor } = getNutrientStatus(value, target, weight)
+                  const showZone = weight >= MIN_WEIGHT_FOR_STATUS_G
 
                   // Target zone markers (as % of bar width, where 100% = midpoint)
+                  // Scaled by weight factor so the zone grows proportionally with bar fill
                   const mid = target ? (target.min + target.max) / 2 : 1
-                  const targetMinPct = target && mid > 0 ? Math.min(100, (target.min / mid) * 100) : 0
-                  const targetMaxPct = target && mid > 0 ? Math.min(120, (target.max / mid) * 100) : 0
+                  const weightFactor = Math.min(weight / BIN_TARGET_DM_G, 1.0)
+                  const targetMinPct = target && mid > 0 ? Math.min(100, (target.min / mid) * 100) * weightFactor : 0
+                  const targetMaxPct = target && mid > 0 ? Math.min(120, (target.max / mid) * 100) * weightFactor : 0
                   // Scale to bar's 120% max
                   const barScale = 100 / 120
                   const zoneLeft = targetMinPct * barScale
@@ -167,27 +187,27 @@ export default function BinStatusPanel({ bins }: BinStatusPanelProps) {
                               {status === "optimal" ? "✓" : status === "low" ? "▼" : "▲"}
                             </span>
                           )}
-                          <span className="text-[10px] text-white/50 font-mono tabular-nums w-16 text-right">
+                          <span className="text-[10px] text-white/50 font-mono tabular-nums w-20 text-right">
                             {value.toFixed(1)}{nutrient.unit}
                           </span>
                         </div>
                       </div>
                       {/* Bar */}
                       <div className={`relative h-2 ${config.barTrack} rounded-full overflow-hidden`}>
-                        {/* Target zone indicator */}
-                        {target && value > 0 && (
+                        {/* Target zone indicator — only visible once bin has meaningful weight */}
+                        {target && value > 0 && showZone && (
                           <div
                             className="absolute top-0 bottom-0 bg-white/[0.06] border-l border-r border-white/10 rounded-sm z-0"
                             style={{
                               left: `${zoneLeft}%`,
-                              width: `${zoneRight - zoneLeft}%`,
+                              width: `${Math.max(zoneRight - zoneLeft, 0)}%`,
                             }}
                           />
                         )}
                         {/* Fill bar */}
                         <div
                           className={`absolute top-0 left-0 h-full rounded-full transition-all duration-700 ease-out ${nutrient.color} ${
-                            status === "optimal" ? `shadow-sm ${nutrient.glowColor}` : ""
+                            status === "optimal" && showZone ? `shadow-sm ${nutrient.glowColor}` : ""
                           }`}
                           style={{
                             width: `${Math.min(progress * barScale, 100)}%`,

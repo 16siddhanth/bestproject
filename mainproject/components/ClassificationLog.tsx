@@ -76,7 +76,7 @@ export default function ClassificationLog({ events }: ClassificationLogProps) {
                     <div className="text-xs text-white/70 truncate">{peelSummary}</div>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <span className="text-[10px] text-white/40">
-                        {topConf.toFixed(0)}% · {event.estimated_weight_g.toFixed(0)}g
+                        {topConf.toFixed(0)}% · {event.estimated_weight_g.toFixed(1)}g DM
                       </span>
                     </div>
                   </div>

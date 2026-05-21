@@ -78,7 +78,8 @@ def _to_dm(fresh: Dict[str, float]) -> Dict[str, float]:
 # These are per 100 g as-fed (fresh).  Converted to DM below.
 
 _FRESH: Dict[str, Dict[str, float]] = {
-    # FDC proxy: #170026 Potatoes, russet, flesh and skin, raw
+    # FDC proxy: #11369 Potatoes, skin only (microwaved, without salt)
+    # Note: values match skin-only data, not the whole-vegetable #170026 entry.
     "Potato Skins": {
         "calories_kcal": 58.0, "protein_g": 2.57, "fat_g": 0.10,
         "fiber_g": 2.5, "calcium_mg": 30.0, "phosphorus_mg": 38.0,
