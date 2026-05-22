@@ -162,11 +162,11 @@ for _v in PEEL_NUTRITION.values():
 PEEL_WEIGHT_RANGES: Dict[str, Tuple[float, float]] = {
     "Potato Skins":       (1.8, 2.2),
     "Onion Skins":        (1.8, 2.2),
-    "Carrot Peels":       (4.0, 5.0),
+    "Carrot Peels":       (6.8, 7.2),
     "Cucumber Peels":     (6.0, 8.0),
     # All remaining classes: 4–8 g
     "Tomato Skins":       (3.0, 5.0),
-    "Brinjal Peels":      (4.0, 8.0),
+    "Brinjal Peels":      (4.8, 5.2),
     "Cabbage Leaves":     (6.0, 10.0),
     "Bell Pepper Scraps": (8.0, 10.0),
     "Broccoli Stems":     (7.0, 11.0),
