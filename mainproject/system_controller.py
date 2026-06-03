@@ -48,9 +48,11 @@ from nutrient_data import (
 PWM_FREQ_HZ = 1000
 CONVEYOR_DUTY_CYCLE = 60.0
 VIBRATION_DUTY_CYCLE = 60.0
-VIBRATION_ON_SECONDS = 5.0
-VIBRATION_CYCLE_SECONDS = 12.0
+M2_INITIAL_DELAY = 6.0         # seconds to wait before starting M2 if no peel detected
+M2_ON_SECONDS = 5.0            # vibration ON duration per cycle
+M2_OFF_SECONDS = 5.0           # vibration OFF duration per cycle
 POST_STOP_CAPTURE_DELAY = 2.0  # seconds to wait after belt stops before capturing frame
+POST_CLASSIFY_WAIT = 3.0       # seconds to wait after classification before resuming motors
 
 
 # ── Motor Pin Configs ─────────────────────────────────────────
@@ -261,7 +263,7 @@ def _extract_json(text: str) -> Optional[dict]:
     return None
 
 
-def classify_frame(frame_jpeg: bytes, model_name: str = "gemini-3-flash-preview") -> Optional[List[Dict]]:
+def classify_frame(frame_jpeg: bytes, model_name: str = "gemini-3.5-flash") -> Optional[List[Dict]]:
     """Classify peels in the frame using an AI vision model. Returns list of {label, confidence, count}."""
     api_key = os.environ.get("CLASSIFIER_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
@@ -354,11 +356,15 @@ class SystemController:
         self.bin_states = create_initial_bin_states()
         self.classification_log: List[ClassificationEvent] = []
         self.vibration_active = False
-        self._belt_stopped = False  # True while belt is stopped for classification
         self.latest_frame_jpeg: Optional[bytes] = None
         self.camera_connected = False
         self.camera_mode = "none"  # "yolo" | "picamera" | "none"
         self.fps = 0.0
+
+        # Motor coordination state
+        self._motors_paused = False          # True during detection → classify → 3s wait
+        self._m2_start_event = threading.Event()  # Signals M2 to begin cycling
+        self._m2_started = False             # Whether M2 has ever started this run
 
         # Per-component hardware availability
         self.hw_status: Dict[str, str] = {
@@ -381,7 +387,7 @@ class SystemController:
             self._camera_ready_event.set()
 
         # AI model
-        self._ai_model = os.environ.get("CLASSIFIER_MODEL", "gemini-3-flash-preview")
+        self._ai_model = os.environ.get("CLASSIFIER_MODEL", "gemini-3.5-flash")
 
         # Boot camera immediately (runs in background thread)
         if not simulate:
@@ -393,6 +399,11 @@ class SystemController:
         self.running = True
         self.status = "starting"
         self._stop_event.clear()
+
+        # Reset motor coordination state for this run
+        self._motors_paused = False
+        self._m2_start_event.clear()
+        self._m2_started = False
 
         # ── Init each hardware component independently ────────
         # Belt motor (BTS7960 #1)
@@ -458,6 +469,9 @@ class SystemController:
         if not self.running:
             return
         self.status = "stopping"
+        # Unblock any paused threads before setting stop event
+        self._motors_paused = False
+        self._m2_start_event.set()  # unblock M2 if it's waiting to start
         self._stop_event.set()
         # Note: self._camera_stop is NOT set here so the feed stays live
         
@@ -722,40 +736,131 @@ class SystemController:
             self._camera_stop.wait(0.033)
 
     def _conveyor_loop(self):
-        """Keep belt motor running while system is active."""
+        """M1 (belt) logic:
+        - Starts immediately on system start.
+        - After 6s with no detection, signals M2 to begin.
+        - Pauses when _motors_paused is True, resumes when cleared.
+        """
         self._belt.motor_forward(CONVEYOR_DUTY_CYCLE)
+        print("[M1] Belt started")
+
+        # 6-second initial timer — if no detection interrupts, start M2
+        if not self._m2_started:
+            deadline = time.monotonic() + M2_INITIAL_DELAY
+            while time.monotonic() < deadline:
+                if self._stop_event.is_set():
+                    self._belt.motor_stop()
+                    return
+                # If paused (detection happened), break out — M2 will be
+                # started after the post-classify resume anyway
+                if self._motors_paused:
+                    break
+                self._stop_event.wait(0.1)
+
+            if not self._motors_paused and not self._m2_started:
+                self._m2_started = True
+                self._m2_start_event.set()
+                print("[M1] 6s elapsed with no detection — signalling M2 to start")
+
+        # Main run loop
         while not self._stop_event.is_set():
+            if self._motors_paused:
+                self._belt.motor_stop()
+                # Wait until resumed
+                while self._motors_paused and not self._stop_event.is_set():
+                    self._stop_event.wait(0.1)
+                if self._stop_event.is_set():
+                    break
+                # Resume belt
+                self._belt.motor_forward(CONVEYOR_DUTY_CYCLE)
+                print("[M1] Belt resumed")
             self._stop_event.wait(0.1)
         self._belt.motor_stop()
+        print("[M1] Belt stopped (system stop)")
 
     def _vibration_loop(self):
-        """Run vibration motor according to constants.
-        Pauses automatically when the belt is stopped (during classification)."""
-        while not self._stop_event.is_set():
-            # Skip vibration while belt is stopped for classification
-            if getattr(self, '_belt_stopped', False):
-                self._vibration.motor_stop()
-                self.vibration_active = False
-                self._stop_event.wait(0.2)
-                continue
+        """M2 (vibration) logic:
+        - Waits for _m2_start_event before doing anything.
+        - Cycles: 5s ON, 5s OFF.
+        - On pause: stops motor, records remaining time in current phase.
+        - On resume: finishes remaining time, then continues cycling.
+        """
+        # Wait for the signal to start (either 6s timer or post-classify resume)
+        while not self._m2_start_event.is_set():
+            if self._stop_event.is_set():
+                return
+            self._stop_event.wait(0.2)
 
-            # Turn on
+        print("[M2] Vibration cycling started")
+
+        while not self._stop_event.is_set():
+            # ── ON phase ──
             self.vibration_active = True
             self._vibration.motor_forward(VIBRATION_DUTY_CYCLE)
-            
-            if self._stop_event.wait(VIBRATION_ON_SECONDS):
-                break
-                
-            # Turn off
-            self._vibration.motor_stop()
-            self.vibration_active = False
-            
-            pause_time = max(0, VIBRATION_CYCLE_SECONDS - VIBRATION_ON_SECONDS)
-            if self._stop_event.wait(pause_time):
+            remaining = M2_ON_SECONDS
+
+            while remaining > 0 and not self._stop_event.is_set():
+                if self._motors_paused:
+                    # Pause: stop motor, wait for resume
+                    self._vibration.motor_stop()
+                    self.vibration_active = False
+                    print(f"[M2] Paused during ON phase ({remaining:.1f}s remaining)")
+                    while self._motors_paused and not self._stop_event.is_set():
+                        self._stop_event.wait(0.1)
+                    if self._stop_event.is_set():
+                        break
+                    # Resume ON phase with remaining time
+                    self.vibration_active = True
+                    self._vibration.motor_forward(VIBRATION_DUTY_CYCLE)
+                    print(f"[M2] Resumed ON phase ({remaining:.1f}s remaining)")
+
+                sleep_step = min(0.1, remaining)
+                start = time.monotonic()
+                self._stop_event.wait(sleep_step)
+                remaining -= (time.monotonic() - start)
+
+            if self._stop_event.is_set():
                 break
 
+            # ── OFF phase ──
+            self._vibration.motor_stop()
+            self.vibration_active = False
+            remaining = M2_OFF_SECONDS
+
+            while remaining > 0 and not self._stop_event.is_set():
+                if self._motors_paused:
+                    # Pause: already stopped, just wait
+                    print(f"[M2] Paused during OFF phase ({remaining:.1f}s remaining)")
+                    while self._motors_paused and not self._stop_event.is_set():
+                        self._stop_event.wait(0.1)
+                    if self._stop_event.is_set():
+                        break
+                    print(f"[M2] Resumed OFF phase ({remaining:.1f}s remaining)")
+
+                sleep_step = min(0.1, remaining)
+                start = time.monotonic()
+                self._stop_event.wait(sleep_step)
+                remaining -= (time.monotonic() - start)
+
+            if self._stop_event.is_set():
+                break
+
+    def _pause_motors(self):
+        """Pause both motors and all cycle timers."""
+        self._motors_paused = True
+
+    def _resume_motors(self):
+        """Resume both motors and all cycle timers.
+        Also ensures M2 has been started (for the case where detection
+        happened during the initial 6s delay before M2 was started)."""
+        if not self._m2_started:
+            self._m2_started = True
+            self._m2_start_event.set()
+            print("[SYSTEM] M2 started after first classification cycle")
+        self._motors_paused = False
+
     def _detection_loop(self):
-        """Watch for YOLO camera detections → stop belt → wait 1.5s → capture frame → classify → sort.
+        """Watch for YOLO camera detections → pause both motors → classify → wait 3s → resume.
         Only active when YOLO inference is available (camera_mode == 'yolo').
         In picamera fallback mode, detection is not possible (no YOLO), so this loop
         does nothing — the user would need to trigger classification manually."""
@@ -768,28 +873,27 @@ class SystemController:
             try:
                 state = self._inference_state.get_state()
 
-                # YOLO11n detects an object on camera → stop belt
+                # YOLO11n detects an object on camera → pause both motors
                 detections = state.get("detections", [])
                 if detections:
                     self.status = "detecting"
-                    
-                    # Snapshot last frame BEFORE stopping to force a fresh post-stop frame (prevent blur)
+
+                    # Snapshot last frame BEFORE stopping to force a fresh post-stop frame
                     frame_before_stop = self._inference_state.get_frame_jpeg()
                     if not frame_before_stop:
                         with self._lock:
                             frame_before_stop = self.latest_frame_jpeg
-                            
-                    # Stop conveyor on camera detection
-                    self._belt_stopped = True
-                    self._belt.motor_stop()
-                    print("[DETECT] Object detected by camera — belt stopped, vibration paused")
+
+                    # Pause both motors and all timers
+                    self._pause_motors()
+                    print("[DETECT] Object detected — both motors paused")
 
                     # Wait for stable frame capture
                     self.status = "classifying"
                     if self._stop_event.wait(POST_STOP_CAPTURE_DELAY):
                         break
 
-                    # Capture fresh frame for AI classification (must differ from moving frame)
+                    # Capture fresh frame for AI classification
                     capture_frame = None
                     for _ in range(20):
                         cand = self._inference_state.get_frame_jpeg()
@@ -800,7 +904,7 @@ class SystemController:
                             capture_frame = cand
                             break
                         time.sleep(0.1)
-                        
+
                     if not capture_frame:
                         capture_frame = self._inference_state.get_frame_jpeg()
                         if not capture_frame:
@@ -814,12 +918,17 @@ class SystemController:
                         else:
                             print("[CLASSIFY] No result from AI classifier")
 
-                    # Resume conveyor and vibration
-                    self._belt_stopped = False
-                    self._belt.motor_forward(CONVEYOR_DUTY_CYCLE)
-                    self.status = "running"
+                    # ── 3-second post-classification wait (motors stay paused) ──
+                    print(f"[SYSTEM] Waiting {POST_CLASSIFY_WAIT}s after classification before resuming motors")
+                    if self._stop_event.wait(POST_CLASSIFY_WAIT):
+                        break
 
-                    # Wait for object to clear the belt before next detection
+                    # Resume both motors
+                    self._resume_motors()
+                    self.status = "running"
+                    print("[SYSTEM] Motors resumed")
+
+                    # Brief cooldown to let object clear the belt
                     self._stop_event.wait(2.0)
                 else:
                     self._stop_event.wait(0.033)
